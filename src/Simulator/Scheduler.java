@@ -8,6 +8,14 @@ package Simulator;
  *
  * @author luisg
  */
-public class Scheduler {
-    
+public abstract class Scheduler {
+    protected Stats stats = new Stats();
+
+    public abstract void start();
+    public abstract void stop();
+    public abstract void addProcess(PCB p);
+
+    public Stats getStats() {
+        return stats;
+    }
 }
