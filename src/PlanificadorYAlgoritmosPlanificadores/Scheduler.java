@@ -15,6 +15,7 @@ import EstructurasDeDatos.Nodo;
  * @author dugla
  */
 public abstract class Scheduler {
+    
     protected Cola<PCB> readyQueue;
     protected PCB currentProcess;
     protected String schedulerName;

@@ -24,7 +24,35 @@ public class Process implements Runnable {
     private long completionTime;
     
     
-    
+    private static int nextId = 0; // Variable estática para generar IDs únicos
+
+/**
+ * Constructor para crear un nuevo proceso con todos sus datos iniciales.
+ */
+    public Process(String name, int totalInstructions, boolean isIOBound, int ioExceptionCycle, int ioCompletionCycle) {
+        this.id = nextId++; // Asigna un ID único y lo incrementa para el siguiente
+        this.name = name;
+        this.totalInstructions = totalInstructions;
+        this.isIOBound = isIOBound;
+
+        // Asignar valores de E/S solo si el proceso es de ese tipo
+        if (isIOBound) {
+            this.ioExceptionCycle = ioExceptionCycle;
+            this.ioCompletionCycle = ioCompletionCycle;
+        } else {
+            // Si no es I/O Bound, ponemos valores que no interfieran
+            this.ioExceptionCycle = -1;
+            this.ioCompletionCycle = -1;
+        }
+
+        // Inicializamos los valores por defecto para un proceso nuevo
+        this.state = ProcessState.NEW; // Necesitarás un enum ProcessState
+        this.programCounter = 0;
+        this.memoryAddressRegister = 0;
+        this.creationTime = System.currentTimeMillis(); // Guarda el momento exacto de creación
+        this.completionTime = -1; // Aún no ha terminado
+    }
+
     
       // Getters y setters
     // Implementación de run() para el thread
