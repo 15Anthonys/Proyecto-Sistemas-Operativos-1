@@ -5,6 +5,7 @@
 package soplanificacion;
 
 import ProccesFabrication.Process;
+import EstructurasDeDatos.Cola;
 
 /**
  *
@@ -12,13 +13,16 @@ import ProccesFabrication.Process;
  */
 public class CrearProcesoDialog extends javax.swing.JDialog {
 
+    private Interfaz interfazPrincipal;
     /**
      * Creates new form CrearProcesoDialog
      */
     public CrearProcesoDialog(java.awt.Frame parent, boolean modal) {
         super(parent, modal);
         initComponents();
-    }
+        // Guarda la referencia a la Interfaz que lo llamó
+        this.interfazPrincipal = (Interfaz) parent; 
+}
 
     /**
      * This method is called from within the constructor to initialize the form.
@@ -222,20 +226,21 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
             "Error de validación",
             javax.swing.JOptionPane.ERROR_MESSAGE);
     } else {
-        // SI TODO ESTÁ BIEN: Crear el proceso y cerrar
+    // SI TODO ESTÁ BIEN: Crear el proceso, añadirlo a la cola y cerrar
         System.out.println("¡Validación exitosa! Creando el proceso...");
 
-        // Usamos los datos ya validados
         boolean esIoBound = radioIoBound.isSelected();
-
-        // Crear la instancia del proceso usando el constructor
         Process nuevoProceso = new Process(nombre, instrucciones, esIoBound, ciclosExcepcion, ciclosResolver);
 
-        // (Futuro) Enviar el proceso al controlador principal
-        // VentanaPrincipal.controlador.agregarNuevoProceso(nuevoProceso);
-        
+        // --- ¡AQUÍ ESTÁ EL CAMBIO! ---
+        // 1. Usa el getter para acceder a la cola de la Interfaz y añade el proceso
+        interfazPrincipal.getColaNuevos().insert(nuevoProceso);
+
+        // (Ya no hay que llamar a ningún método de refrescar)
+        // --- FIN DEL CAMBIO ---
+
         System.out.println("Proceso Creado: ID=" + nuevoProceso.getId() + ", Nombre=" + nuevoProceso.getName());
-        
+
         // Cerrar la ventana de diálogo
         this.dispose();
     }

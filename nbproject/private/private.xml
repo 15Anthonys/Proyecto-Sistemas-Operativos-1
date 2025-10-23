@@ -5,9 +5,16 @@
         <group>
             <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/EstructurasDeDatos/Nodo.java</file>
             <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/soplanificacion/SOPlanificacion.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/soplanificacion/CrearProcesoDialog.java</file>
             <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/soplanificacion/Interfaz.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/PlanificadorYAlgoritmosPlanificadores/EventLogger.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/ProccesFabrication/PCB.java</file>
             <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/EstructurasDeDatos/ListaSimple.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/PlanificadorYAlgoritmosPlanificadores/Scheduler.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/ProccesFabrication/PCBExample.java</file>
             <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/EstructurasDeDatos/Cola.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/ProccesFabrication/Process.java</file>
+            <file>file:/C:/Users/dugla/Documents/Plantillas%20personalizadas%20de%20Office/SOPlanificacion/src/ProccesFabrication/ProcessState.java</file>
         </group>
     </open-files>
 </project-private>
