@@ -16,8 +16,12 @@ public class RoundRobinAlgorithm implements SchedulerAlgorithm {
         if (colaListos.isEmpty()) {
             return null;
         }
-        // RR: También saca al primero de la cola.
-        Process p = colaListos.getpFirst().getData();
+        
+        // --- ARREGLO AQUÍ ---
+        // Cambiamos "getpFirst().getData()" por "pop()"
+        // pop() SÍ remueve el proceso de la cola.
+        Process p = colaListos.pop(); 
+        // --- FIN DEL ARREGLO ---
         
         // ¡Le asigna su quantum antes de devolverlo!
         p.setQuantumRestante(this.quantum); 

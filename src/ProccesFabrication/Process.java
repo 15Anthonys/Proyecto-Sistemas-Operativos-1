@@ -105,7 +105,7 @@ public class Process implements Runnable {
                     System.out.println("  " + name + " (RUN): PC=" + getProgramCounter() + ", Q=" + this.quantumRestante);
                     
                     // Simula 1 ciclo de trabajo
-                    Thread.sleep(500); 
+                    Thread.sleep(700); 
                     
                     // --- REVISAR SI DEBE SALIR ---
                     if (this.getProgramCounter() >= this.getTotalInstructions()) {
@@ -136,6 +136,10 @@ public class Process implements Runnable {
             if (proximoEstado == ProcessState.TERMINATED) {
                 this.setState(ProcessState.TERMINATED);
                 System.out.println("Proceso " + name + " -> TERMINADO.");
+                
+                
+                Interfaz.contadorProcesosEnMemoria.decrementAndGet();
+                
                 Interfaz.semaforoTerminados.acquire();
                 try {
                     Interfaz.colaTerminados.insert(this);
@@ -180,6 +184,11 @@ public class Process implements Runnable {
         } // Fin del bucle de vida
         
     } catch (InterruptedException e) {
+        
+        if (this.state != ProcessState.TERMINATED) { // Evita doble decremento
+             Interfaz.contadorProcesosEnMemoria.decrementAndGet();
+        }
+        
         this.state = ProcessState.TERMINATED;
         System.out.println("Proceso " + name + " interrumpido y finalizado.");
     }

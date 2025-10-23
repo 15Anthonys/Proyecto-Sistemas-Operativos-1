@@ -51,12 +51,27 @@ public class Cola <T>{
     }
 
     public T pop() {
+    
+        // --- ¡ARREGLO AQUÍ! ---
+        // Añade esta comprobación de 3 líneas
+        if (isEmpty()) {
+            return null; // Si la cola está vacía, devuelve null
+        }
+        // --- FIN DEL ARREGLO ---
+
         Nodo<T> popped = this.pFirst;
-        this.pFirst = this.pFirst.getPnext();
+        this.pFirst = this.pFirst.getPnext(); // <-- Esta línea era el error cuando pFirst era null
         this.size--;
 
+        // --- ARREGLO 2 (MUY IMPORTANTE) ---
+        // Si la cola quedó vacía, pLast también debe ser null
+        if (isEmpty()) {
+            this.pLast = null; 
+        }
+        // --- FIN DEL ARREGLO 2 ---
+
         return popped.getData();
-    }
+}
 
     public boolean remove(T data) {
         if (isEmpty()) {

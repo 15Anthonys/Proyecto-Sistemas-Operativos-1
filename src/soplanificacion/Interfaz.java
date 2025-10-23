@@ -4,13 +4,19 @@
  */
 package soplanificacion;
 import EstructurasDeDatos.Cola;
-import EstructurasDeDatos.ListaSimple;
 import EstructurasDeDatos.Nodo;
-import ProccesFabrication.ProcessState;
-import javax.swing.Box;
-import javax.swing.JLabel;
-import java.util.concurrent.Semaphore;
+import Planificacion.*; // Importa tus clases de Planificacion (Planificador, GestorIO, PMP, Algoritmo)
 import ProccesFabrication.Process;
+import ProccesFabrication.ProcessState;
+
+import javax.swing.*; // Para componentes Swing (Timer, JLabel, etc.)
+import java.awt.*; // Para Layouts (BorderLayout)
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.ArrayList;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  *
@@ -38,11 +44,27 @@ public class Interfaz extends javax.swing.JFrame {
     public static Cola<Process> colaTerminados = new Cola<>();
 
     // --- SEMÁFOROS (Los "Candados") ---
+    
+    public static Semaphore semaforoNuevos = new Semaphore(1);
     // (Estos ya estaban bien inicializados)
     public static Semaphore semaforoListos = new Semaphore(1);
     public static Semaphore semaforoBloqueados = new Semaphore(1);
     public static Semaphore semaforoTerminados = new Semaphore(1);
     public static Semaphore semaforoCPU = new Semaphore(1);
+    
+    public static Semaphore semContadorListos = new Semaphore(0);
+    
+    
+    public static Cola<Process> colaListosSuspendidos = new Cola<>();
+    public static Cola<Process> colaBloqueadosSuspendidos = new Cola<>();
+    
+    // --- NUEVOS Semáforos de DISCO ---
+    public static Semaphore semaforoListosSuspendidos = new Semaphore(1);
+    public static Semaphore semaforoBloqueadosSuspendidos = new Semaphore(1);
+    
+    public static AtomicInteger contadorProcesosEnMemoria = new AtomicInteger(0);
+    
+    public static volatile Process procesoEnCPU = null;
 
     // ... Hilos ...
     private Thread hiloPlanificador;
@@ -55,6 +77,13 @@ public class Interfaz extends javax.swing.JFrame {
     public EstructurasDeDatos.Cola<ProccesFabrication.Process> getColaNuevos() {
         return colaNuevos;
     }
+    
+    private Timer guiTimer;
+    
+    
+    private JPanel panelContenedorBloqueados;
+    private JPanel panelContenedorListosSusp;
+    private JPanel panelContenedorBloqueadosSusp;
 
     /**
      * Creates new form Interfaz
@@ -62,7 +91,6 @@ public class Interfaz extends javax.swing.JFrame {
     public Interfaz() {
         initComponents();
         
-
         actualizarEstadoBotones(); 
 
             // 1. Creamos el panel que tendrá las tarjetas
@@ -400,43 +428,13 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel3.setBorder(new javax.swing.border.MatteBorder(null));
 
         PanelBloqueados_Suspendidos.setPreferredSize(new java.awt.Dimension(223, 174));
-
-        javax.swing.GroupLayout PanelBloqueados_SuspendidosLayout = new javax.swing.GroupLayout(PanelBloqueados_Suspendidos);
-        PanelBloqueados_Suspendidos.setLayout(PanelBloqueados_SuspendidosLayout);
-        PanelBloqueados_SuspendidosLayout.setHorizontalGroup(
-            PanelBloqueados_SuspendidosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 223, Short.MAX_VALUE)
-        );
-        PanelBloqueados_SuspendidosLayout.setVerticalGroup(
-            PanelBloqueados_SuspendidosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 174, Short.MAX_VALUE)
-        );
+        PanelBloqueados_Suspendidos.setLayout(new java.awt.BorderLayout());
 
         PanelBloqueados.setPreferredSize(new java.awt.Dimension(223, 174));
-
-        javax.swing.GroupLayout PanelBloqueadosLayout = new javax.swing.GroupLayout(PanelBloqueados);
-        PanelBloqueados.setLayout(PanelBloqueadosLayout);
-        PanelBloqueadosLayout.setHorizontalGroup(
-            PanelBloqueadosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 223, Short.MAX_VALUE)
-        );
-        PanelBloqueadosLayout.setVerticalGroup(
-            PanelBloqueadosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 174, Short.MAX_VALUE)
-        );
+        PanelBloqueados.setLayout(new java.awt.BorderLayout());
 
         PanelListos_Suspendidos.setPreferredSize(new java.awt.Dimension(223, 174));
-
-        javax.swing.GroupLayout PanelListos_SuspendidosLayout = new javax.swing.GroupLayout(PanelListos_Suspendidos);
-        PanelListos_Suspendidos.setLayout(PanelListos_SuspendidosLayout);
-        PanelListos_SuspendidosLayout.setHorizontalGroup(
-            PanelListos_SuspendidosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 223, Short.MAX_VALUE)
-        );
-        PanelListos_SuspendidosLayout.setVerticalGroup(
-            PanelListos_SuspendidosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 174, Short.MAX_VALUE)
-        );
+        PanelListos_Suspendidos.setLayout(new java.awt.BorderLayout());
 
         jLabel16.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         jLabel16.setForeground(new java.awt.Color(255, 255, 255));
@@ -478,13 +476,13 @@ public class Interfaz extends javax.swing.JFrame {
                     .addGroup(jPanel3Layout.createSequentialGroup()
                         .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                             .addGroup(jPanel3Layout.createSequentialGroup()
+                                .addGap(75, 75, 75)
+                                .addComponent(jLabel25))
+                            .addGroup(jPanel3Layout.createSequentialGroup()
                                 .addGap(45, 45, 45)
                                 .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                                    .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                    .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                            .addGroup(jPanel3Layout.createSequentialGroup()
-                                .addGap(75, 75, 75)
-                                .addComponent(jLabel25)))
+                                    .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, 223, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                    .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
                         .addGap(48, 48, 48)
                         .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                             .addComponent(jLabel26)
@@ -505,9 +503,9 @@ public class Interfaz extends javax.swing.JFrame {
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(jLabel16)))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(PanelBloqueados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(PanelBloqueados, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(PanelListos, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel25)

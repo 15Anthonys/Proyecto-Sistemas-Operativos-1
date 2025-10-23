@@ -6,6 +6,8 @@ package soplanificacion;
 
 import ProccesFabrication.Process;
 import EstructurasDeDatos.Cola;
+import java.util.concurrent.Semaphore; // <<< ¡NUEVO IMPORT!
+import javax.swing.JOptionPane;
 
 /**
  *
@@ -157,93 +159,116 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
 
     private void botonCrearActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_botonCrearActionPerformed
         // TODO add your handling code here:// 1. Recolectar los datos de los campos
-    StringBuilder errores = new StringBuilder();
+        // 1. Recolectar los datos de los campos
+        StringBuilder errores = new StringBuilder();
+        
+        // Variables para almacenar los datos del proceso
+        String nombre = "";
+        int instrucciones = 0;
+        int ciclosExcepcion = -1; // -1 para CPU-Bound
+        int ciclosResolver = -1;  // -1 para CPU-Bound
+
+        // --- INICIO DE VALIDACIONES ---
+
+        // 1. Validar Nombre
+        nombre = txtNombre.getText().trim();
+        if (nombre.isEmpty()) {
+            errores.append("- El nombre del proceso no puede estar vacío.\n");
+        }
+
+        // 2. Validar Instrucciones (Numérico y Positivo)
+        try {
+            instrucciones = Integer.parseInt(txtInstrucciones.getText());
+            if (instrucciones <= 0) {
+                errores.append("- La cantidad de instrucciones debe ser un número mayor a cero.\n");
+            }
+        } catch (NumberFormatException e) {
+            errores.append("- La cantidad de instrucciones debe ser un número válido.\n");
+        }
+
+        // 3. Validar Tipo de Proceso (Selección obligatoria)
+        if (!radioCpuBound.isSelected() && !radioIoBound.isSelected()) {
+            errores.append("- Debe seleccionar un tipo de proceso (CPU-Bound o I/O-Bound).\n");
+        }
+
+        // 4. Validaciones específicas para I/O-Bound
+        if (radioIoBound.isSelected()) {
+            // Validar Ciclos para Excepción
+            try {
+                ciclosExcepcion = Integer.parseInt(txtCiclosExcepcion.getText());
+                if (ciclosExcepcion <= 0) {
+                    errores.append("- Los ciclos para excepción deben ser un número mayor a cero.\n");
+                }
+            } catch (NumberFormatException e) {
+                errores.append("- Los ciclos para excepción deben ser un número válido.\n");
+            }
+
+            // Validar Ciclos para Resolver
+            try {
+                ciclosResolver = Integer.parseInt(txtCiclosResolver.getText());
+                if (ciclosResolver <= 0) {
+                    errores.append("- Los ciclos para resolver deben ser un número mayor a cero.\n");
+                }
+            } catch (NumberFormatException e) {
+                errores.append("- Los ciclos para resolver deben ser un número válido.\n");
+            }
+
+            // 5. Validación Lógica: Ciclos de Excepción vs. Instrucciones
+            if (instrucciones > 0 && ciclosExcepcion > 0 && ciclosExcepcion >= instrucciones) {
+                errores.append("- Los ciclos para la excepción deben ser menores que el total de instrucciones.\n");
+            }
+        }
+
+        // --- FIN DE VALIDACIONES ---
+
+        // 6. Comprobar si se encontraron errores y actuar
+        if (errores.length() > 0) {
+            // SI HAY ERRORES: Mostrar ventana de alerta
+            JOptionPane.showMessageDialog(this,
+                "Por favor, corrija los siguientes errores:\n\n" + errores.toString(),
+                "Error de validación",
+                JOptionPane.ERROR_MESSAGE);
+        } else {
+            // SI TODO ESTÁ BIEN: Crear el proceso, añadirlo a la cola y cerrar
+            System.out.println("¡Validación exitosa! Creando el proceso...");
+
+            boolean esIoBound = radioIoBound.isSelected();
+            Process nuevoProceso = new Process(nombre, instrucciones, esIoBound, ciclosExcepcion, ciclosResolver);
+
+            // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
+            try {
+                // 3. Añadirlo a la cola global de "Nuevos" (de forma SEGURA)
+                Interfaz.semaforoNuevos.acquire(); // Pide el candado
+                try {
+                    // Ahora es seguro modificar la cola
+                    // (Asumo que tu Interfaz.java tiene un getter para la cola)
+                    // Si 'colaNuevos' es 'public static', puedes usar Interfaz.colaNuevos
+                    interfazPrincipal.getColaNuevos().insert(nuevoProceso);
+                } finally {
+                    Interfaz.semaforoNuevos.release(); // Suelta el candado
+                }
+                // --- FIN DE LA CORRECCIÓN ---
+
+                System.out.println("Proceso Creado: ID=" + nuevoProceso.getId() + ", Nombre=" + nuevoProceso.getName());
+                
+                // Muestra pop-up de éxito
+                JOptionPane.showMessageDialog(this, 
+                    "Proceso '" + nombre + "' creado con éxito.", 
+                    "Proceso Creado", 
+                    JOptionPane.INFORMATION_MESSAGE);
     
-    // Variables para almacenar los datos del proceso
-    String nombre = "";
-    int instrucciones = 0;
-    int ciclosExcepcion = 0;
-    int ciclosResolver = 0;
+                // Cerrar la ventana de diálogo
+                this.dispose();
 
-    // --- INICIO DE VALIDACIONES ---
-
-    // 1. Validar Nombre
-    nombre = txtNombre.getText().trim();
-    if (nombre.isEmpty()) {
-        errores.append("- El nombre del proceso no puede estar vacío.\n");
-    }
-
-    // 2. Validar Instrucciones (Numérico y Positivo)
-    try {
-        instrucciones = Integer.parseInt(txtInstrucciones.getText());
-        if (instrucciones <= 0) {
-            errores.append("- La cantidad de instrucciones debe ser un número mayor a cero.\n");
-        }
-    } catch (NumberFormatException e) {
-        errores.append("- La cantidad de instrucciones debe ser un número válido.\n");
-    }
-
-    // 3. Validar Tipo de Proceso (Selección obligatoria)
-    if (!radioCpuBound.isSelected() && !radioIoBound.isSelected()) {
-        errores.append("- Debe seleccionar un tipo de proceso (CPU-Bound o I/O-Bound).\n");
-    }
-
-    // 4. Validaciones específicas para I/O-Bound
-    if (radioIoBound.isSelected()) {
-        // Validar Ciclos para Excepción
-        try {
-            ciclosExcepcion = Integer.parseInt(txtCiclosExcepcion.getText());
-            if (ciclosExcepcion <= 0) {
-                errores.append("- Los ciclos para excepción deben ser un número mayor a cero.\n");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // Buena práctica
+                JOptionPane.showMessageDialog(this, 
+                    "Error de concurrencia: No se pudo añadir el proceso a la cola.\n" + e.getMessage(), 
+                    "Error", 
+                    JOptionPane.ERROR_MESSAGE);
             }
-        } catch (NumberFormatException e) {
-            errores.append("- Los ciclos para excepción deben ser un número válido.\n");
+            // --- FIN DEL BLOQUE 'else' MODIFICADO ---
         }
-
-        // Validar Ciclos para Resolver
-        try {
-            ciclosResolver = Integer.parseInt(txtCiclosResolver.getText());
-            if (ciclosResolver <= 0) {
-                errores.append("- Los ciclos para resolver deben ser un número mayor a cero.\n");
-            }
-        } catch (NumberFormatException e) {
-            errores.append("- Los ciclos para resolver deben ser un número válido.\n");
-        }
-
-        // 5. Validación Lógica: Ciclos de Excepción vs. Instrucciones
-        if (instrucciones > 0 && ciclosExcepcion > 0 && ciclosExcepcion >= instrucciones) {
-            errores.append("- Los ciclos para la excepción deben ser menores que el total de instrucciones.\n");
-        }
-    }
-
-    // --- FIN DE VALIDACIONES ---
-
-    // 6. Comprobar si se encontraron errores y actuar
-    if (errores.length() > 0) {
-        // SI HAY ERRORES: Mostrar ventana de alerta
-        javax.swing.JOptionPane.showMessageDialog(this,
-            "Por favor, corrija los siguientes errores:\n\n" + errores.toString(),
-            "Error de validación",
-            javax.swing.JOptionPane.ERROR_MESSAGE);
-    } else {
-    // SI TODO ESTÁ BIEN: Crear el proceso, añadirlo a la cola y cerrar
-        System.out.println("¡Validación exitosa! Creando el proceso...");
-
-        boolean esIoBound = radioIoBound.isSelected();
-        Process nuevoProceso = new Process(nombre, instrucciones, esIoBound, ciclosExcepcion, ciclosResolver);
-
-        // --- ¡AQUÍ ESTÁ EL CAMBIO! ---
-        // 1. Usa el getter para acceder a la cola de la Interfaz y añade el proceso
-        interfazPrincipal.getColaNuevos().insert(nuevoProceso);
-
-        // (Ya no hay que llamar a ningún método de refrescar)
-        // --- FIN DEL CAMBIO ---
-
-        System.out.println("Proceso Creado: ID=" + nuevoProceso.getId() + ", Nombre=" + nuevoProceso.getName());
-
-        // Cerrar la ventana de diálogo
-        this.dispose();
-    }
         
     }//GEN-LAST:event_botonCrearActionPerformed
 

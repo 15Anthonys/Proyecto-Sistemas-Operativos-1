@@ -1,28 +1,27 @@
-//
-
 package Planificacion;
 
 import EstructurasDeDatos.Cola;
-import EstructurasDeDatos.ListaSimple; // Sigue usando tu ListaSimple
+import EstructurasDeDatos.ListaSimple;
 import EstructurasDeDatos.Nodo;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 import soplanificacion.Interfaz;
 
 /**
- * Hilo independiente que gestiona la cola de Bloqueados.
- * (VERSIÓN CORREGIDA SIN DEADLOCK)
+ * Hilo que gestiona AMBAS colas de Bloqueados (RAM y Disco).
+ * (VERSIÓN ACTUALIZADA PARA ESTADOS SUSPENDIDOS)
  */
 public class GestorIO implements Runnable {
     
     private boolean simulacionActiva = true;
     
-    // Lista temporal SÓLO para "marcar" procesos.
-    // No necesita semáforo porque solo este hilo la toca.
-    private ListaSimple<Process> procesosListosParaSalir;
+    // Listas temporales (locales a este hilo, no necesitan semáforo)
+    private ListaSimple<Process> procesosListosRAM;
+    private ListaSimple<Process> procesosListosDisco; // <<< NUEVO
 
     public GestorIO() {
-        this.procesosListosParaSalir = new ListaSimple<>();
+        this.procesosListosRAM = new ListaSimple<>();
+        this.procesosListosDisco = new ListaSimple<>(); // <<< NUEVO
     }
     
     @Override
@@ -32,59 +31,80 @@ public class GestorIO implements Runnable {
                 // 1. Duerme un "ciclo" de E/S
                 Thread.sleep(1000); // Representa 1 ciclo de tiempo
                 
-                // --- LÓGICA DE DESBLOQUEO (Parte 1: Marcar) ---
-                // Revisa la cola de bloqueados y "marca" los que terminaron.
-                
-                // 2. Pide el candado de Bloqueados
+                // --- PARTE 1: MARCAR (RAM) ---
                 Interfaz.semaforoBloqueados.acquire();
                 try {
-                    Nodo<Process> actual = Interfaz.colaBloqueados.getpFirst();
-                    while (actual != null) {
-                        Process p = actual.getData();
-                        p.setTiempoBloqueadoRestante(p.getTiempoBloqueadoRestante() - 1);
-                        
-                        if (p.getTiempoBloqueadoRestante() <= 0) {
-                            // 3. Lo "marca" para moverlo (lo añade a la lista local)
-                            procesosListosParaSalir.addAtTheEnd(p);
-                        }
-                        actual = actual.getPnext();
-                    }
+                    marcarProcesosTerminados(Interfaz.colaBloqueados, procesosListosRAM);
                 } finally {
-                    // 4. Suelta el candado
                     Interfaz.semaforoBloqueados.release();
                 }
                 
-                // --- LÓGICA DE MOVIMIENTO (Parte 2: Mover) ---
-                // Mueve los procesos "marcados" uno por uno.
-                
-                if (procesosListosParaSalir.isEmpty()) {
-                    continue; // No hay nada que mover, vuelve al inicio del bucle
+                // --- PARTE 2: MARCAR (DISCO) ---
+                Interfaz.semaforoBloqueadosSuspendidos.acquire();
+                try {
+                    marcarProcesosTerminados(Interfaz.colaBloqueadosSuspendidos, procesosListosDisco);
+                } finally {
+                    Interfaz.semaforoBloqueadosSuspendidos.release();
                 }
+                
+                // --- PARTE 3: MOVER (RAM) ---
+                // Mueve de Bloqueados (RAM) -> Listos (RAM)
+                while (!procesosListosRAM.isEmpty()) {
+                    Process p = procesosListosRAM.getValueByIndex(0);
+                    procesosListosRAM.deleteFirst();
 
-                // Itera sobre la lista de marcados
-                while (!procesosListosParaSalir.isEmpty()) {
-                    // Saca el primer proceso de la lista temporal
-                    Process p = procesosListosParaSalir.getValueByIndex(0);
-                    procesosListosParaSalir.deleteFirst();
-
-                    // 5. Pide candado de Bloqueados (para SACAR)
+                    // 5a. Saca de Bloqueados (RAM)
                     Interfaz.semaforoBloqueados.acquire();
                     try {
-                        Interfaz.colaBloqueados.remove(p); // Lo saca de bloqueados
+                        Interfaz.colaBloqueados.remove(p);
                     } finally {
                         Interfaz.semaforoBloqueados.release();
                     }
                     
-                    // 6. Pide candado de Listos (para METER)
+                    // 5b. Mete en Listos (RAM)
                     Interfaz.semaforoListos.acquire();
                     try {
                         p.setState(ProcessState.READY);
-                        Interfaz.colaListos.insert(p); // Lo mete en listos
-                        System.out.println("GESTOR E/S: Proceso " + p.getName() + " DESBLOQUEADO -> Listos");
+                        Interfaz.colaListos.insert(p);
+                        System.out.println("GESTOR E/S: Proceso " + p.getName() + " (RAM) -> Listos (RAM)");
                     } finally {
                         Interfaz.semaforoListos.release();
                     }
-                } // Fin del while (mover)
+
+                    // 5c. ¡¡DESPIERTA AL HILO!! (Tu Process.java lo necesita)
+                    // (Esto arregla un bug que tenías)
+                    synchronized (p) {
+                        p.notify();
+                    }
+                }
+
+                // --- PARTE 4: MOVER (DISCO) ---
+                // Mueve de Bloqueados/Susp (Disco) -> Listos/Susp (Disco)
+                while (!procesosListosDisco.isEmpty()) {
+                    Process p = procesosListosDisco.getValueByIndex(0);
+                    procesosListosDisco.deleteFirst();
+
+                    // 6a. Saca de Bloqueados/Susp (Disco)
+                    Interfaz.semaforoBloqueadosSuspendidos.acquire();
+                    try {
+                        Interfaz.colaBloqueadosSuspendidos.remove(p);
+                    } finally {
+                        Interfaz.semaforoBloqueadosSuspendidos.release();
+                    }
+                    
+                    // 6b. Mete en Listos/Susp (Disco)
+                    Interfaz.semaforoListosSuspendidos.acquire();
+                    try {
+                        p.setState(ProcessState.SUSPENDED_READY); // Tu Enum usa este nombre
+                        Interfaz.colaListosSuspendidos.insert(p);
+                        System.out.println("GESTOR E/S: Proceso " + p.getName() + " (Disco) -> Listos/Susp (Disco)");
+                    } finally {
+                        Interfaz.semaforoListosSuspendidos.release();
+                    }
+                    
+                    // 6c. ¡¡NO SE HACE NOTIFY!! El proceso sigue en disco.
+                    // El PMP se encargará de él.
+                }
 
             } catch (InterruptedException e) {
                 simulacionActiva = false;
@@ -94,6 +114,24 @@ public class GestorIO implements Runnable {
                 e.printStackTrace();
             }
         } // Fin del while (simulacionActiva)
+    }
+    
+    /**
+     * Función de ayuda para iterar una cola, restar tiempo
+     * y marcar los procesos terminados en una lista.
+     * (Esta función se ejecuta DENTRO de un semáforo)
+     */
+    private void marcarProcesosTerminados(Cola<Process> cola, ListaSimple<Process> listaMarcados) {
+        Nodo<Process> actual = cola.getpFirst();
+        while (actual != null) {
+            Process p = actual.getData();
+            p.setTiempoBloqueadoRestante(p.getTiempoBloqueadoRestante() - 1);
+            
+            if (p.getTiempoBloqueadoRestante() <= 0) {
+                listaMarcados.addAtTheEnd(p); // Lo "marca"
+            }
+            actual = actual.getPnext();
+        }
     }
     
     public void detener() {
