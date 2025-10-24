@@ -1,45 +1,46 @@
 package Planificacion;
 
+import ProccesFabrication.Process;
 import EstructurasDeDatos.Cola;
 import EstructurasDeDatos.Nodo;
-import ProccesFabrication.Process;
 
 public class HRRNAlgorithm implements SchedulerAlgorithm {
-    
-    @Override
-    public Process seleccionarSiguiente(Cola<Process> colaListos) {
-        if (colaListos.isEmpty()) return null;
-            
-        // --- Lógica de Búsqueda HRRN ---
-        Nodo<Process> nodoActual = colaListos.getpFirst();
-        Process mejorProceso = nodoActual.getData();
-        double maxRatio = -1.0;
-        
-        while (nodoActual != null) {
-            Process p = nodoActual.getData();
-            
-            // R = (w + s) / s
-            // w = ciclosEnEspera (¡Debes incrementarlo en el GestorIO o Planificador!)
-            // s = totalInstructions
-            
-            double w = (double) p.getCiclosEnEspera();
-            double s = (double) p.getTotalInstructions();
-            if (s == 0) s = 1; // Evitar división por cero
-            
-            double ratio = (w + s) / s;
-            
-            if (ratio > maxRatio) {
-                maxRatio = ratio;
-                mejorProceso = p;
-            }
-            nodoActual = nodoActual.getPnext();
-        }
-        // --- Fin Búsqueda ---
-        
-        mejorProceso.setCiclosEnEspera(0); // Resetea el contador
-        return mejorProceso;
+    public String name(){ return "HRRN"; }
+    public boolean isPreemptive(){ return false; }
+    public void setQuantum(int q){}
+    public int getQuantum(){ return 0; }
+
+    public void enqueue(Cola<Process> ready, Process p, long now){
+        p.onEnterReady(now);
+        ready.insert(p);
     }
-    
-    @Override
-    public void setQuantum(int quantum) { /* No usa */ }
+
+    public Process pickNext(Cola<Process> ready, long now){
+        if (ready.isEmpty()) return null;
+        double bestRatio = -1.0;
+        Process best = null;
+        Nodo<Process> cur = ready.getpFirst();
+        while(cur!=null){
+            Process p = cur.getData();
+            long waiting = now - p.lastReadyEnqueueCycle;
+            int service = Math.max(1, p.getTotalInstructions());
+            double r = (waiting + service) / (double) service;
+            if (r > bestRatio){ bestRatio = r; best = p; }
+            cur = cur.getPnext();
+        }
+        if (best != null){
+            int rotates = ready.getSize();
+            while(rotates-- > 0){
+                Process head = ready.pop();
+                if (head == best){
+                    best.onLeaveReady(now);
+                    return head;
+                }
+                ready.insert(head);
+            }
+        }
+        return null;
+    }
+
+    public boolean shouldPreempt(Process running, Cola<Process> ready, long now){ return false; }
 }

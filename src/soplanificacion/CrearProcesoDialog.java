@@ -6,7 +6,6 @@ package soplanificacion;
 
 import ProccesFabrication.Process;
 import EstructurasDeDatos.Cola;
-import java.util.concurrent.Semaphore; // <<< ¡NUEVO IMPORT!
 import javax.swing.JOptionPane;
 
 /**

@@ -2,90 +2,117 @@ package Planificacion;
 
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
+import EstructurasDeDatos.Cola;
+import EstructurasDeDatos.Nodo;
 import soplanificacion.Interfaz;
-import java.util.concurrent.Semaphore;
 
-/**
- * Hilo Planificador de Corto Plazo.
- * Selecciona el siguiente proceso de la cola de Listos según el algoritmo
- * y le asigna el quantum apropiado antes de despertarlo.
- * (Versión corregida para FCFS y RR)
- */
 public class Planificador implements Runnable {
+    private final SchedulerAlgorithm algo;
+    private volatile boolean running = true;
+    private volatile int cycleMs = 1000;
 
-    private volatile boolean simulacionActiva = true; // volatile para visibilidad entre hilos
-    private SchedulerAlgorithm algoritmo;
-    private Semaphore semaforoListos = Interfaz.semaforoListos; // Semáforo Mutex para la cola
+    public Planificador(SchedulerAlgorithm algo){ this.algo = algo; }
 
-    public Planificador(SchedulerAlgorithm algoritmo) {
-        this.algoritmo = algoritmo;
+    public void setCycleMs(int ms){ this.cycleMs = Math.max(1, ms); }
+    public int getCycleMs(){ return cycleMs; }
+    public void detener(){ running = false; }
+
+    public void admitirAListos(Process p, long now){
+        try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); return; }
+        try { algo.enqueue(Interfaz.colaListos, p, now); }
+        finally { Interfaz.semaforoListos.release(); }
+    }
+
+    public void cambiarAlgoritmo(SchedulerAlgorithm nuevo){
+        try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); return; }
+        try {
+            Cola<Process> temp = new Cola<>();
+            while(!Interfaz.colaListos.isEmpty()) temp.insert(Interfaz.colaListos.pop());
+            long now = Interfaz.globalClock.get();
+            while(!temp.isEmpty()) nuevo.enqueue(Interfaz.colaListos, temp.pop(), now);
+        } finally { Interfaz.semaforoListos.release(); }
     }
 
     @Override
     public void run() {
-        System.out.println("Planificador de Corto Plazo iniciado con algoritmo: " + algoritmo.getClass().getSimpleName());
-        while (simulacionActiva && !Thread.currentThread().isInterrupted()) { // Añadir chequeo de interrupción
-            try {
-                Process proximoProceso = null;
+        while(running){
+            try { Thread.sleep(cycleMs); } catch (InterruptedException ignored){}
 
-                // 1. Busca y SACA el siguiente proceso de Listos (Zona Crítica)
-                //    El algoritmo (FCFS o RR) se encarga de hacer pop().
-                semaforoListos.acquire();
-                try {
-                    proximoProceso = algoritmo.seleccionarSiguiente(Interfaz.colaListos);
-                } finally {
-                    semaforoListos.release();
-                }
+            long now = Interfaz.globalClock.incrementAndGet(); // avanza reloj global
 
-                // Si se encontró un proceso
-                if (proximoProceso != null) {
-                    // 2. Asigna el quantum ANTES de despertar al proceso
-                    if (algoritmo instanceof RoundRobinAlgorithm) {
-                        // Para RR, el método seleccionarSiguiente ya debería haber asignado el quantum.
-                        // Si no lo hace, deberías añadirlo aquí o (mejor) en RoundRobinAlgorithm.java
-                        // Ejemplo: proximoProceso.setQuantumRestante(((RoundRobinAlgorithm) algoritmo).getQuantum());
-                        if (proximoProceso.getQuantumRestante() <= 0) { // Doble chequeo por si RR no lo asignó
-                            System.err.println("Advertencia: RR no asignó quantum a " + proximoProceso.getName() + ". Asignando por defecto.");
-                             // Necesitaríamos obtener el quantum del algoritmo aquí. Asumamos 3.
-                            proximoProceso.setQuantumRestante(3);
-                        }
+            // Expropiación por política
+            Process current = Interfaz.procesoEnCPU;
+            if (current != null && algo.isPreemptive()){
+                if (algo.shouldPreempt(current, Interfaz.colaListos, now)){
+                    current.setState(ProcessState.READY);
+                    if (algo instanceof FeedbackAlgorithm){
+                        ((FeedbackAlgorithm)algo).onQuantumExpired(current, now);
                     } else {
-                        // Para FCFS, SPN, SRT, HRRN (no usan quantum predefinido)
-                        proximoProceso.setQuantumRestante(-1); // Señal para "ejecutar sin límite"
+                        admitirAListos(current, now);
+                    }
+                    Interfaz.procesoEnCPU = null;
+                }
+            }
+
+            // Despacho
+            if (Interfaz.procesoEnCPU == null){
+                Process next = null;
+                try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                try { next = algo.pickNext(Interfaz.colaListos, now); }
+                finally { Interfaz.semaforoListos.release(); }
+
+                if (next != null){
+                    next.setState(ProcessState.RUNNING);
+                    if (next.firstRunCycle < 0) next.firstRunCycle = now;
+                    Interfaz.procesoEnCPU = next;
+                }
+            }
+
+            // Ejecutar 1 ciclo
+            if (Interfaz.procesoEnCPU != null){
+                Process r = Interfaz.procesoEnCPU;
+                r.step();
+                if (r.quantumRemaining > 0) r.quantumRemaining--;
+
+                if (r.shouldRaiseIO() && !r.isFinished()){
+                    Interfaz.procesoEnCPU = null; // Libera la CPU
+                    r.setState(ProcessState.BLOCKED);
+
+                    // ¡ESTO ES LO MÁS IMPORTANTE!
+                    // Le da al GestorIO el tiempo que debe esperar
+                    r.setTiempoBloqueadoRestante(r.getExceptionService()); 
+
+                    // Mueve el proceso a la cola de Bloqueados
+                    try { Interfaz.semaforoBloqueados.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                    try { Interfaz.colaBloqueados.insert(r); }
+                    finally { Interfaz.semaforoBloqueados.release(); }
+
+                    // NO se crea ningún hilo. El GestorIO (que ya está corriendo) se encargará.
+
+                    continue; // Salta al siguiente ciclo del planificador
                     }
 
-                    // 3. Despierta al hilo del proceso para que compita por la CPU
-                    synchronized (proximoProceso) {
-                        // El estado se pondrá en RUNNING dentro del hilo del proceso cuando adquiera la CPU
-                        proximoProceso.notify();
-                    }
-                     //System.out.println("Planificador: Despertando a " + proximoProceso.getName()); // Log opcional
-
-                } else {
-                    // Si no hay procesos en Listos, el planificador espera un poco
-                     Thread.sleep(100); // Espera activa (polling)
+                if (r.isFinished()){
+                    r.setState(ProcessState.TERMINATED);
+                    r.finishCycle = now;
+                    Interfaz.procesoEnCPU = null;
+                    try { Interfaz.semaforoTerminados.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                    try { Interfaz.colaTerminados.insert(r); }
+                    finally { Interfaz.semaforoTerminados.release(); }
+                    Interfaz.contadorProcesosEnMemoria.decrementAndGet();
+                    continue;
                 }
 
-                // 4. Pausa breve del planificador (opcional, ya espera si la cola está vacía)
-                // Thread.sleep(50); // Puedes ajustar o quitar esto
-
-            } catch (InterruptedException e) {
-                System.out.println("Planificador de Corto Plazo interrumpido.");
-                simulacionActiva = false;
-                Thread.currentThread().interrupt(); // Restablece flag de interrupción
-            } catch (Exception e) {
-                System.err.println("Error inesperado en Planificador: " + e.getMessage());
-                e.printStackTrace();
-                simulacionActiva = false; // Detiene el planificador en caso de error grave
+                if (algo.isPreemptive() && algo.shouldPreempt(r, Interfaz.colaListos, now)){
+                    Interfaz.procesoEnCPU = null;
+                    r.setState(ProcessState.READY);
+                    if (algo instanceof FeedbackAlgorithm){
+                        ((FeedbackAlgorithm)algo).onQuantumExpired(r, now);
+                    } else {
+                        admitirAListos(r, now);
+                    }
+                }
             }
         }
-         System.out.println("--- Hilo Planificador de Corto Plazo terminado. ---");
-    }
-
-    /**
-     * Señaliza al hilo para que detenga su bucle principal.
-     */
-    public void detener() {
-        this.simulacionActiva = false;
     }
 }

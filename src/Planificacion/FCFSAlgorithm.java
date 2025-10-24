@@ -1,24 +1,25 @@
 package Planificacion;
 
-import EstructurasDeDatos.Cola;
 import ProccesFabrication.Process;
+import EstructurasDeDatos.Cola;
+import EstructurasDeDatos.Nodo;
 
-public class FCFSAlgorithm implements SchedulerAlgorithm { // Asegúrate que implemente la interfaz
+public class FCFSAlgorithm implements SchedulerAlgorithm {
+    public String name(){ return "FCFS"; }
+    public boolean isPreemptive(){ return false; }
+    public void setQuantum(int q){}
+    public int getQuantum(){ return 0; }
 
-    @Override
-    public Process seleccionarSiguiente(Cola<Process> colaListos) {
-        if (colaListos.isEmpty()) {
-            return null; // Devuelve null si la cola está vacía
-        }
-        // --- ¡CAMBIO CRÍTICO AQUÍ! ---
-        // Usa pop() para SACAR el primer proceso de la cola.
-        return colaListos.pop();
-        // --- FIN DEL CAMBIO ---
+    public void enqueue(Cola<Process> ready, Process p, long now){
+        p.onEnterReady(now);
+        ready.insert(p);
     }
 
-    @Override
-    public void setQuantum(int quantum) {
-        // FCFS no usa quantum, así que este método no hace nada.
-        // Déjalo vacío como lo tienes.
+    public Process pickNext(Cola<Process> ready, long now){
+        Process p = ready.pop();
+        if (p != null) p.onLeaveReady(now);
+        return p;
     }
+
+    public boolean shouldPreempt(Process running, Cola<Process> ready, long now){ return false; }
 }
