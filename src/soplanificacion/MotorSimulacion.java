@@ -13,7 +13,7 @@ import java.util.concurrent.Semaphore;
  * para el control de admisión y suspensión.
  * (VERSIÓN CORREGIDA)
  */
-public class ConsoleSimulator {
+public class MotorSimulacion {
 
     // --- Referencias a las colas GLOBALES (de Interfaz) ---
     static Cola<Process> colaNuevos = Interfaz.colaNuevos;

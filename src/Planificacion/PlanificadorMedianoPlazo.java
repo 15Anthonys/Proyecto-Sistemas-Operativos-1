@@ -4,7 +4,7 @@ import EstructurasDeDatos.Cola;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 import soplanificacion.Interfaz;
-import soplanificacion.ConsoleSimulator;
+import soplanificacion.MotorSimulacion;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -128,11 +128,11 @@ public class PlanificadorMedianoPlazo implements Runnable {
     
     private void iniciarHiloProceso(Process p) throws InterruptedException {
         Thread t = new Thread(p, "Hilo-" + p.getName());
-        ConsoleSimulator.semaforoHilosProcesos.acquire();
+        MotorSimulacion.semaforoHilosProcesos.acquire();
         try {
-            ConsoleSimulator.hilosProcesos.add(t);
+            MotorSimulacion.hilosProcesos.add(t);
         } finally {
-            ConsoleSimulator.semaforoHilosProcesos.release();
+            MotorSimulacion.semaforoHilosProcesos.release();
         }
         t.start();
     }

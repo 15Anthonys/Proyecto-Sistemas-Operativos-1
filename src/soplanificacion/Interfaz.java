@@ -33,6 +33,8 @@ public class Interfaz extends javax.swing.JFrame {
     private javax.swing.JScrollPane scrollPaneListos;
     private javax.swing.JPanel panelContenedorListos;
     
+    private Timer clockTimer;
+    
     
 // --- EDD Original (Solo para "Nuevos") ---
     public static Cola<Process> colaNuevos = new Cola<>(); 
@@ -64,6 +66,8 @@ public class Interfaz extends javax.swing.JFrame {
     
     public static AtomicInteger contadorProcesosEnMemoria = new AtomicInteger(0);
     
+    public static AtomicInteger globalClock = new AtomicInteger(0);
+    
     public static volatile Process procesoEnCPU = null;
 
     // ... Hilos ...
@@ -84,49 +88,54 @@ public class Interfaz extends javax.swing.JFrame {
     private JPanel panelContenedorBloqueados;
     private JPanel panelContenedorListosSusp;
     private JPanel panelContenedorBloqueadosSusp;
+    private JPanel panelContenedorTerminados;
 
     /**
      * Creates new form Interfaz
      */
     public Interfaz() {
         initComponents();
-        
-        actualizarEstadoBotones(); 
-
-            // 1. Creamos el panel que tendrá las tarjetas
-        panelContenedorListos = new javax.swing.JPanel();
-        panelContenedorListos.setLayout(new javax.swing.BoxLayout(
-            panelContenedorListos, javax.swing.BoxLayout.X_AXIS
-        ));
-        // (Opcional) Le damos el mismo color gris de fondo
-        panelContenedorListos.setBackground(PanelListos.getBackground()); 
-
-        // 2. Creamos el JScrollPane y metemos el contenedor DENTRO
-        scrollPaneListos = new javax.swing.JScrollPane(panelContenedorListos);
-
-        // 3. Le decimos que SÓLO sea horizontal
-        scrollPaneListos.setVerticalScrollBarPolicy(
-            javax.swing.JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        );
-        scrollPaneListos.setHorizontalScrollBarPolicy(
-            javax.swing.JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-        );
-
-        // 4. --- ¡LA LÍNEA MÁGICA QUE ARREGLA TODO! ---
-        // Le damos un tamaño fijo al JScrollPane (el tamaño de tu panel gris)
-        // Esto evita que BorderLayout lo colapse a (0,0).
-        scrollPaneListos.setPreferredSize(new java.awt.Dimension(223, 174));
-        // --- FIN DE LA LÍNEA MÁGICA ---
-
-        // 5. Añadimos el JScrollPane a tu PanelListos (el gris)
-        PanelListos.add(scrollPaneListos, java.awt.BorderLayout.CENTER);
-
-        // 6. Forzamos al PanelListos (gris) a "re-dibujarse"
-        PanelListos.revalidate();
-
-        // --- FIN DEL CÓDIGO ---
+        configurarPanelesDeColasVisualmente();
+        actualizarEstadoBotones();
+        iniciarRelojGlobal();
         
     }
+    
+    
+    /**
+     * Inicia un Timer independiente que actualiza el reloj global (globalClock)
+     * y el JLabel TextRelojGlobal cada segundo.
+     * LLAMADO DESDE EL CONSTRUCTOR.
+     */
+    private void iniciarRelojGlobal() {
+        // Detiene cualquier timer de reloj anterior si existe
+        if (clockTimer != null && clockTimer.isRunning()) {
+            clockTimer.stop();
+        }
+
+        // Resetea el contador global y el texto del label al inicio
+        Interfaz.globalClock.set(0);
+        SwingUtilities.invokeLater(() -> TextRelojGlobal.setText("Reloj Global 0"));
+
+        // Crea el Timer que se dispara cada 1000ms (1 segundo)
+        clockTimer = new Timer(1000, new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // Incrementa el contador atómico global
+                int nuevoCiclo = Interfaz.globalClock.incrementAndGet();
+                // Actualiza el texto del JLabel en el hilo de Swing
+                final String textoReloj = "Reloj Global " + nuevoCiclo;
+                SwingUtilities.invokeLater(() -> TextRelojGlobal.setText(textoReloj));
+            }
+        });
+
+        clockTimer.setInitialDelay(1000); // Espera 1 segundo antes del primer incremento
+        clockTimer.setRepeats(true);    // Asegura que se repita
+        clockTimer.start();             // ¡Inicia el timer del reloj!
+
+        System.out.println("GUI: Reloj Global iniciado.");
+    }
+    
     
     private void actualizarEstadoBotones() {
     // Comprueba si hay al menos un proceso en la cola de Nuevos
@@ -137,6 +146,168 @@ public class Interfaz extends javax.swing.JFrame {
         BotonIniciar.setEnabled(hayProcesosNuevos);
 }
     
+    private void actualizarPanelesDeColas() {
+        actualizarUnPanel(panelContenedorListos, colaListos, semaforoListos);
+        actualizarUnPanel(panelContenedorBloqueados, colaBloqueados, semaforoBloqueados);
+        actualizarUnPanel(panelContenedorListosSusp, colaListosSuspendidos, semaforoListosSuspendidos);
+        actualizarUnPanel(panelContenedorBloqueadosSusp, colaBloqueadosSuspendidos, semaforoBloqueadosSuspendidos);
+        // --- ¡NUEVA LÍNEA AQUÍ! ---
+        actualizarUnPanel(panelContenedorTerminados, colaTerminados, semaforoTerminados);
+    }
+    
+    /**
+     * Inicia el Timer de la GUI que refrescará los paneles y el reloj global.
+     * Este método debe ser llamado por el ActionListener del botón "Iniciar".
+     */
+     /**
+     * Inicia el Timer de la GUI que refrescará los paneles de colas y CPU
+     * periódicamente (cada 250ms).
+     * LLAMADO POR BotonIniciarActionPerformed.
+     */
+    private void iniciarTimerGUI() {
+        // Detiene el timer anterior si existe
+        if (guiTimer != null && guiTimer.isRunning()) {
+            guiTimer.stop();
+            System.out.println("GUI: Timer de paneles anterior detenido.");
+        }
+
+        // --- YA NO SE RESETEA EL RELOJ GLOBAL AQUÍ ---
+
+        // Crea el Timer que se dispara cada 250ms
+        guiTimer = new Timer(250, new ActionListener() {
+            // Ya no necesita la variable 'lastClockUpdateTime'
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // --- SE ELIMINÓ LA LÓGICA DEL RELOJ DE AQUÍ ---
+
+                // --- Actualización de Paneles ---
+                actualizarPanelesDeColas(); // Actualiza los 4+1 paneles de colas
+                actualizarPanelCPU();     // Actualiza el panel de CPU
+                // actualizarPanelTerminadosYEventos(); // (Para después)
+                // --- Fin Actualización Paneles ---
+            }
+        });
+
+        // Configuración adicional del Timer
+        guiTimer.setInitialDelay(100); // Pequeña espera antes del primer disparo
+        guiTimer.setRepeats(true);    // Asegura que se repita
+        guiTimer.start();             // ¡Inicia el Timer de paneles!
+
+        System.out.println("GUI: Timer de paneles iniciado (refresco cada 250ms).");
+    }
+    
+    private void configurarPanelesDeColasVisualmente() {
+    configurarUnPanelConScroll(PanelListos, "panelContenedorListos");
+    configurarUnPanelConScroll(PanelBloqueados, "panelContenedorBloqueados");
+    configurarUnPanelConScroll(PanelListos_Suspendidos, "panelContenedorListosSusp");
+    configurarUnPanelConScroll(PanelBloqueados_Suspendidos, "panelContenedorBloqueadosSusp");
+    configurarUnPanelConScroll(PanelTerminados, "panelContenedorTerminados");
+}
+    
+    
+    private void configurarUnPanelConScroll(JPanel panelExternoExistente, String nombreVariablePanelInterno) {
+        // 1. Asegura BorderLayout en el panel gris/azul que ya tienes
+        panelExternoExistente.setLayout(new BorderLayout());
+        panelExternoExistente.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+
+        // 2. Crea el panel INTERNO (donde irán las TARJETAS)
+        JPanel panelInternoNuevo = new JPanel();
+        // --- ¡CAMBIO AQUÍ! --- Usa BoxLayout HORIZONTAL ---
+        panelInternoNuevo.setLayout(new BoxLayout(panelInternoNuevo, BoxLayout.X_AXIS));
+        // --- FIN DEL CAMBIO ---
+        panelInternoNuevo.setBackground(Color.WHITE); // Fondo blanco
+        panelInternoNuevo.setOpaque(true);
+
+        // 3. Guarda la referencia al panel interno nuevo
+        switch (nombreVariablePanelInterno) {
+            case "panelContenedorListos":         panelContenedorListos = panelInternoNuevo; break;
+            case "panelContenedorBloqueados":     panelContenedorBloqueados = panelInternoNuevo; break;
+            case "panelContenedorListosSusp":     panelContenedorListosSusp = panelInternoNuevo; break;
+            case "panelContenedorBloqueadosSusp": panelContenedorBloqueadosSusp = panelInternoNuevo; break;
+            case "panelContenedorTerminados":     panelContenedorTerminados = panelInternoNuevo; break;
+        }
+
+        // 4. Crea el JScrollPane y mete el panel INTERNO dentro
+        JScrollPane scrollPane = new JScrollPane(panelInternoNuevo);
+        // --- ¡CAMBIO AQUÍ! --- Ajusta las políticas de scroll ---
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER); // NUNCA vertical
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED); // Horizontal si es necesario
+        // --- FIN DEL CAMBIO ---
+        scrollPane.setBorder(null);
+
+        // 5. Añade el JScrollPane al CENTRO del panel gris/azul existente
+        panelExternoExistente.add(scrollPane, BorderLayout.CENTER);
+
+        // 6. Refresca el panel existente
+        panelExternoExistente.revalidate();
+        panelExternoExistente.repaint();
+    }
+    
+    
+    /**
+     * MÉTODO CLAVE: Lee una cola del backend (protegida por semáforo)
+     * y crea TARJETAS (PanelProcesoVista) en el panel interno correspondiente. <--- CAMBIO
+     */
+    private void actualizarUnPanel(JPanel panelInterno, Cola<Process> cola, Semaphore sem) {
+        if (panelInterno == null) return;
+
+        // 1. Limpia el panel interno
+        panelInterno.removeAll();
+
+        ArrayList<Process> procesosEnCola = new ArrayList<>(); // Lista temporal para Procesos
+
+        try {
+            // 2. Intenta adquirir semáforo (rápido)
+            if (sem.tryAcquire(50, TimeUnit.MILLISECONDS)) {
+                try {
+                    // --- SECCIÓN CRÍTICA ---
+                    // Copia los OBJETOS Process a la lista temporal
+                    Nodo<Process> actual = cola.getpFirst();
+                    while (actual != null) {
+                        procesosEnCola.add(actual.getData()); // Copia el objeto Process
+                        actual = actual.getPnext();
+                    }
+                } finally {
+                    // 3. Libera el semáforo rápido
+                    sem.release();
+                }
+            } else {
+                // Semáforo ocupado, no hacemos nada más que limpiar y refrescar
+                panelInterno.add(new JLabel(" ...Cargando... ")); // Muestra mensaje temporal
+                panelInterno.revalidate();
+                panelInterno.repaint();
+                return; // Sal del método hasta el siguiente tick del timer
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            panelInterno.add(new JLabel(" Error Hilo "));
+            panelInterno.revalidate();
+            panelInterno.repaint();
+            return; // Sal del método
+        }
+
+        // 4. Fuera de la sección crítica, actualiza la GUI con los datos copiados
+        if (procesosEnCola.isEmpty()) {
+            panelInterno.add(Box.createHorizontalGlue()); // Empuja el texto al centro horizontal
+            panelInterno.add(new JLabel(" Vacío "));
+            panelInterno.add(Box.createHorizontalGlue());
+        } else {
+            // --- ¡CAMBIO AQUÍ! --- Crea y añade TARJETAS ---
+            panelInterno.add(Box.createHorizontalStrut(5)); // Pequeño margen izquierdo
+            for (Process p : procesosEnCola) {
+                PanelProcesoVista tarjeta = new PanelProcesoVista(); // Crea tu tarjeta
+                tarjeta.actualizarDatos(p); // Le pasas el proceso
+                panelInterno.add(tarjeta); // Añades la tarjeta
+                panelInterno.add(Box.createHorizontalStrut(5)); // Espacio entre tarjetas
+            }
+            // --- FIN DEL CAMBIO ---
+        }
+
+        // 5. Refresca el panel interno para mostrar las tarjetas
+        panelInterno.revalidate();
+        panelInterno.repaint();
+    }
     
     private void actualizarPanelListos() {
     
@@ -175,6 +346,73 @@ public class Interfaz extends javax.swing.JFrame {
         panelContenedorListos.repaint();
 }
     
+    
+    /**
+     * Selecciona y devuelve la instancia del algoritmo de planificación
+     * basado en la selección del JComboBox.
+     */
+    private Planificacion.SchedulerAlgorithm seleccionarAlgoritmo(String nombreAlgoritmo) {
+        switch (nombreAlgoritmo) {
+            case "First-Come, First-Served":
+                return new Planificacion.FCFSAlgorithm(); // Asumiendo que existe
+            case "Round Robin":
+                // Necesitas un quantum. Podrías tener un JTextField para configurarlo,
+                // o un valor por defecto. Usaremos 3 por ahora.
+                return new Planificacion.RoundRobinAlgorithm(3);
+            case "Shortest Process Next":
+                return new Planificacion.SPNAlgorithm(); // Asumiendo que existe
+            case "Shortest Remaining Time":
+                return new Planificacion.SRTAlgorithm(); // Asumiendo que existe
+            case "Highest Response-Ratio Next":
+                return new Planificacion.HRRNAlgorithm(); // Asumiendo que existe
+                
+            case "Feedback":
+                // --- ¡ARREGLO AQUÍ! --- Comenta o elimina este bloque ---
+                 System.out.println("ALGORITMO FEEDBACK NO IMPLEMENTADO AÚN");
+                 return null; // Devuelve null temporalmente
+                 /*
+                 // Cuando tengas FeedbackAlgorithm.java en el paquete Planificacion, descomenta:
+                 return new Planificacion.FeedbackAlgorithm();
+                 */
+                 // --- FIN DEL ARREGLO ---
+            default:
+                JOptionPane.showMessageDialog(this, "Algoritmo no reconocido: " + nombreAlgoritmo, "Error", JOptionPane.ERROR_MESSAGE);
+                return null; // O lanza una excepción
+        }
+    }
+    
+    /**
+     * Actualiza los JLabels del panel de ejecución de CPU
+     * basado en la variable global Interfaz.procesoEnCPU.
+     * LLAMADO POR EL TIMER.
+     */
+    private void actualizarPanelCPU() {
+        Process p = Interfaz.procesoEnCPU; // Lee la referencia al proceso actual
+
+        // Actualiza los JLabels. Si p es null, muestra "N/A" o "System".
+        if (p != null) {
+            // Hay un proceso de usuario en ejecución
+            lblNombreProcesoCPU.setText(p.getName());
+            lblIdProcesoCPU.setText(String.valueOf(p.getId()));
+            lblPcProcesoCPU.setText(String.valueOf(p.getProgramCounter()));
+            lblMarProcesoCPU.setText(String.valueOf(p.getMemoryAddressRegister())); // O como obtengas el MAR
+            lblStatusProcesoCPU.setText(p.getState().toString()); // Debería ser "Ejecutando"
+            lblTipoProcesoCPU.setText(p.isIsIOBound() ? "I/O Bound" : "CPU Bound");
+        } else {
+            // No hay proceso de usuario, CPU idle o ejecutando OS
+            lblNombreProcesoCPU.setText("Proceso System"); // O "Idle"
+            lblIdProcesoCPU.setText("N/A");
+            lblPcProcesoCPU.setText("N/A");
+            lblMarProcesoCPU.setText("N/A");
+            lblStatusProcesoCPU.setText("N/A"); // O "Idle"
+            lblTipoProcesoCPU.setText("N/A"); // O "Kernel"
+        }
+
+        // (Opcional) Refrescar el panel si es necesario, aunque cambiar texto de JLabel suele ser automático
+        // PanelProcesoEjecucion.revalidate();
+        // PanelProcesoEjecucion.repaint();
+    }
+    
     /**
      * This method is called from within the constructor to initialize the form.
      * WARNING: Do NOT modify this code. The content of this method is always
@@ -187,17 +425,12 @@ public class Interfaz extends javax.swing.JFrame {
         jTabbedPane1 = new javax.swing.JTabbedPane();
         jPanel1 = new javax.swing.JPanel();
         jPanel7 = new javax.swing.JPanel();
-        jLabel11 = new javax.swing.JLabel();
+        TextRelojGlobal = new javax.swing.JLabel();
         jLabel12 = new javax.swing.JLabel();
         BotonReiniciar = new javax.swing.JButton();
         BotonIniciar = new javax.swing.JButton();
         BotonPausar = new javax.swing.JButton();
         jComboAlgoritmos = new javax.swing.JComboBox<>();
-        TextCicloActual = new javax.swing.JTextField();
-        jLabel14 = new javax.swing.JLabel();
-        TextEstado = new javax.swing.JTextField();
-        TextDuracion = new javax.swing.JTextField();
-        jLabel15 = new javax.swing.JLabel();
         jLabel17 = new javax.swing.JLabel();
         jPanel2 = new javax.swing.JPanel();
         jLabel13 = new javax.swing.JLabel();
@@ -216,6 +449,19 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel9 = new javax.swing.JPanel();
         jLabel18 = new javax.swing.JLabel();
         PanelProcesoEjecucion = new javax.swing.JPanel();
+        jLabel1 = new javax.swing.JLabel();
+        jLabel2 = new javax.swing.JLabel();
+        jLabel3 = new javax.swing.JLabel();
+        jLabel4 = new javax.swing.JLabel();
+        jLabel5 = new javax.swing.JLabel();
+        jLabel6 = new javax.swing.JLabel();
+        jLabel7 = new javax.swing.JLabel();
+        lblNombreProcesoCPU = new javax.swing.JLabel();
+        lblIdProcesoCPU = new javax.swing.JLabel();
+        lblPcProcesoCPU = new javax.swing.JLabel();
+        lblMarProcesoCPU = new javax.swing.JLabel();
+        lblStatusProcesoCPU = new javax.swing.JLabel();
+        lblTipoProcesoCPU = new javax.swing.JLabel();
         jPanel11 = new javax.swing.JPanel();
         jLabel19 = new javax.swing.JLabel();
         PanelTerminadosEventos = new javax.swing.JPanel();
@@ -223,14 +469,16 @@ public class Interfaz extends javax.swing.JFrame {
         PanelRendimiento = new javax.swing.JPanel();
         jLabel21 = new javax.swing.JLabel();
         jPanel15 = new javax.swing.JPanel();
-        SliderTiempoReal = new javax.swing.JSlider();
         jLabel20 = new javax.swing.JLabel();
         jLabel27 = new javax.swing.JLabel();
         BotonCambiarAlgoritmo = new javax.swing.JButton();
         jLabel28 = new javax.swing.JLabel();
+        cycleDurationSlider = new javax.swing.JSlider();
         jPanel16 = new javax.swing.JPanel();
         jLabel24 = new javax.swing.JLabel();
         BotonEscribir = new javax.swing.JButton();
+        PanelTerminados = new javax.swing.JPanel();
+        jLabel29 = new javax.swing.JLabel();
         jPanel4 = new javax.swing.JPanel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
@@ -240,9 +488,9 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel7.setBackground(new java.awt.Color(204, 102, 0));
         jPanel7.setBorder(new javax.swing.border.MatteBorder(null));
 
-        jLabel11.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
-        jLabel11.setForeground(new java.awt.Color(255, 255, 255));
-        jLabel11.setText("Duracion:");
+        TextRelojGlobal.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 14)); // NOI18N
+        TextRelojGlobal.setForeground(new java.awt.Color(255, 255, 255));
+        TextRelojGlobal.setText("Reloj Global: ");
 
         jLabel12.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         jLabel12.setForeground(new java.awt.Color(255, 255, 255));
@@ -269,14 +517,11 @@ public class Interfaz extends javax.swing.JFrame {
 
         jComboAlgoritmos.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
         jComboAlgoritmos.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "First-Come, First-Served", "Round Robin", "Shortest Process Next", "Shortest Remaining Time", "Highest Response-Ratio Next", "Feedback" }));
-
-        jLabel14.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
-        jLabel14.setForeground(new java.awt.Color(255, 255, 255));
-        jLabel14.setText("Ciclo Actual:");
-
-        jLabel15.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
-        jLabel15.setForeground(new java.awt.Color(255, 255, 255));
-        jLabel15.setText("Estado:");
+        jComboAlgoritmos.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jComboAlgoritmosActionPerformed(evt);
+            }
+        });
 
         jLabel17.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         jLabel17.setForeground(new java.awt.Color(255, 255, 255));
@@ -289,42 +534,21 @@ public class Interfaz extends javax.swing.JFrame {
             .addGroup(jPanel7Layout.createSequentialGroup()
                 .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(jPanel7Layout.createSequentialGroup()
-                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                            .addGroup(jPanel7Layout.createSequentialGroup()
-                                .addGap(29, 29, 29)
-                                .addComponent(jLabel15)
-                                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                                    .addGroup(jPanel7Layout.createSequentialGroup()
-                                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                                            .addGroup(jPanel7Layout.createSequentialGroup()
-                                                .addGap(18, 18, 18)
-                                                .addComponent(TextEstado, javax.swing.GroupLayout.PREFERRED_SIZE, 220, javax.swing.GroupLayout.PREFERRED_SIZE))
-                                            .addGroup(jPanel7Layout.createSequentialGroup()
-                                                .addGap(276, 276, 276)
-                                                .addComponent(jLabel11)))
-                                        .addGap(27, 27, 27))
-                                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createSequentialGroup()
-                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                        .addComponent(jLabel14)
-                                        .addGap(13, 13, 13))))
-                            .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel7Layout.createSequentialGroup()
-                                .addGap(81, 81, 81)
-                                .addComponent(BotonIniciar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                                .addComponent(BotonPausar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                                .addComponent(BotonReiniciar)))
-                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(TextCicloActual, javax.swing.GroupLayout.PREFERRED_SIZE, 90, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createSequentialGroup()
-                                .addComponent(TextDuracion, javax.swing.GroupLayout.PREFERRED_SIZE, 90, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addGap(19, 19, 19))))
+                        .addGap(81, 81, 81)
+                        .addComponent(BotonIniciar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(BotonPausar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(BotonReiniciar)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 52, Short.MAX_VALUE)
+                        .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 217, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(jPanel7Layout.createSequentialGroup()
                         .addGap(32, 32, 32)
                         .addComponent(jLabel12)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, 190, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addContainerGap(16, Short.MAX_VALUE))
+                        .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, 190, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(0, 0, Short.MAX_VALUE)))
+                .addContainerGap())
             .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                 .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createSequentialGroup()
                     .addContainerGap(201, Short.MAX_VALUE)
@@ -340,29 +564,16 @@ public class Interfaz extends javax.swing.JFrame {
                         .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                             .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                             .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE))
-                        .addGap(0, 41, Short.MAX_VALUE))
+                        .addGap(8, 8, 8)
+                        .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 26, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(0, 18, Short.MAX_VALUE))
                     .addGroup(jPanel7Layout.createSequentialGroup()
                         .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                                .addComponent(BotonIniciar)
-                                .addComponent(BotonPausar)
-                                .addComponent(BotonReiniciar))
-                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                                .addComponent(jLabel11, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addComponent(TextDuracion, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))))
-                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel7Layout.createSequentialGroup()
-                        .addGap(31, 31, 31)
                         .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                            .addComponent(TextEstado, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(jLabel15, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE))
-                        .addGap(25, 25, 25))
-                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createSequentialGroup()
-                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                            .addComponent(jLabel14, javax.swing.GroupLayout.PREFERRED_SIZE, 39, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(TextCicloActual, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                        .addGap(60, 60, 60))))
+                            .addComponent(BotonIniciar)
+                            .addComponent(BotonPausar)
+                            .addComponent(BotonReiniciar))))
+                .addGap(95, 95, 95))
             .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                 .addGroup(jPanel7Layout.createSequentialGroup()
                     .addGap(16, 16, 16)
@@ -532,15 +743,101 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel18.setText("<html><center>Cpu y Proceso en Ejecucion</center></html>");
         jLabel18.setHorizontalTextPosition(javax.swing.SwingConstants.CENTER);
 
+        jLabel1.setFont(new java.awt.Font("Segoe UI Emoji", 1, 14)); // NOI18N
+        jLabel1.setText("CPU");
+
+        jLabel2.setText("Proceso en Ejecucion:");
+
+        jLabel3.setText("ID:");
+
+        jLabel4.setText("PC:");
+
+        jLabel5.setText("Status:");
+
+        jLabel6.setText("MAR:");
+
+        jLabel7.setText("Tipo:");
+
+        lblNombreProcesoCPU.setText("N/A");
+
+        lblIdProcesoCPU.setText("N/A");
+
+        lblPcProcesoCPU.setText("N/A");
+
+        lblMarProcesoCPU.setText("N/A");
+
+        lblStatusProcesoCPU.setText("N/A");
+
+        lblTipoProcesoCPU.setText("N/A");
+
         javax.swing.GroupLayout PanelProcesoEjecucionLayout = new javax.swing.GroupLayout(PanelProcesoEjecucion);
         PanelProcesoEjecucion.setLayout(PanelProcesoEjecucionLayout);
         PanelProcesoEjecucionLayout.setHorizontalGroup(
             PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 194, Short.MAX_VALUE)
+            .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                .addContainerGap()
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel2)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblNombreProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel7)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblTipoProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, 171, Short.MAX_VALUE)
+                        .addGap(8, 8, 8))
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel3)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblIdProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, 191, Short.MAX_VALUE))
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel4)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblPcProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, 189, Short.MAX_VALUE))
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel6)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblMarProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, 177, Short.MAX_VALUE))
+                    .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                        .addComponent(jLabel5)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lblStatusProcesoCPU, javax.swing.GroupLayout.DEFAULT_SIZE, 171, Short.MAX_VALUE)))
+                .addContainerGap())
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, PanelProcesoEjecucionLayout.createSequentialGroup()
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addComponent(jLabel1, javax.swing.GroupLayout.PREFERRED_SIZE, 37, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(91, 91, 91))
         );
         PanelProcesoEjecucionLayout.setVerticalGroup(
             PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 195, Short.MAX_VALUE)
+            .addGroup(PanelProcesoEjecucionLayout.createSequentialGroup()
+                .addContainerGap()
+                .addComponent(jLabel1)
+                .addGap(18, 18, 18)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblNombreProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel3, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblIdProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel4, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblPcProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 8, Short.MAX_VALUE)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel6, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblMarProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel5, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblStatusProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addGroup(PanelProcesoEjecucionLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel7, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(lblTipoProcesoCPU, javax.swing.GroupLayout.PREFERRED_SIZE, 16, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addGap(9, 9, 9))
         );
 
         javax.swing.GroupLayout jPanel9Layout = new javax.swing.GroupLayout(jPanel9);
@@ -548,11 +845,11 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel9Layout.setHorizontalGroup(
             jPanel9Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel9Layout.createSequentialGroup()
-                .addContainerGap(36, Short.MAX_VALUE)
+                .addContainerGap(24, Short.MAX_VALUE)
                 .addGroup(jPanel9Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(PanelProcesoEjecucion, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jLabel18, javax.swing.GroupLayout.PREFERRED_SIZE, 197, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addContainerGap(35, Short.MAX_VALUE))
+                    .addComponent(jLabel18, javax.swing.GroupLayout.PREFERRED_SIZE, 197, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(PanelProcesoEjecucion, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addContainerGap(21, Short.MAX_VALUE))
         );
         jPanel9Layout.setVerticalGroup(
             jPanel9Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -572,14 +869,16 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel19.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         jLabel19.setForeground(new java.awt.Color(255, 255, 255));
         jLabel19.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        jLabel19.setText("<html><center>Terminados y Log de Eventos</center></html>");
+        jLabel19.setText("<html><cenater>Log de Eventos</center></html>");
         jLabel19.setHorizontalTextPosition(javax.swing.SwingConstants.CENTER);
+
+        PanelTerminadosEventos.setPreferredSize(new java.awt.Dimension(223, 174));
 
         javax.swing.GroupLayout PanelTerminadosEventosLayout = new javax.swing.GroupLayout(PanelTerminadosEventos);
         PanelTerminadosEventos.setLayout(PanelTerminadosEventosLayout);
         PanelTerminadosEventosLayout.setHorizontalGroup(
             PanelTerminadosEventosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 0, Short.MAX_VALUE)
+            .addGap(0, 197, Short.MAX_VALUE)
         );
         PanelTerminadosEventosLayout.setVerticalGroup(
             PanelTerminadosEventosLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -592,19 +891,19 @@ public class Interfaz extends javax.swing.JFrame {
             jPanel11Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel11Layout.createSequentialGroup()
                 .addGap(35, 35, 35)
-                .addGroup(jPanel11Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jLabel19, javax.swing.GroupLayout.PREFERRED_SIZE, 197, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(PanelTerminadosEventos, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                .addContainerGap(36, Short.MAX_VALUE))
+                .addGroup(jPanel11Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(jLabel19)
+                    .addComponent(PanelTerminadosEventos, javax.swing.GroupLayout.DEFAULT_SIZE, 197, Short.MAX_VALUE))
+                .addGap(36, 36, 36))
         );
         jPanel11Layout.setVerticalGroup(
             jPanel11Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel11Layout.createSequentialGroup()
                 .addContainerGap()
-                .addComponent(jLabel19, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(PanelTerminadosEventos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addComponent(jLabel19, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(18, 18, 18)
+                .addComponent(PanelTerminadosEventos, javax.swing.GroupLayout.PREFERRED_SIZE, 188, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(45, Short.MAX_VALUE))
         );
 
         jLabel19.getAccessibleContext().setAccessibleDescription("");
@@ -622,7 +921,7 @@ public class Interfaz extends javax.swing.JFrame {
         );
         PanelRendimientoLayout.setVerticalGroup(
             PanelRendimientoLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 285, Short.MAX_VALUE)
+            .addGap(0, 259, Short.MAX_VALUE)
         );
 
         jLabel21.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
@@ -636,38 +935,29 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel13Layout.setHorizontalGroup(
             jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel13Layout.createSequentialGroup()
-                .addGap(40, 40, 40)
-                .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(46, Short.MAX_VALUE))
-            .addGroup(jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel13Layout.createSequentialGroup()
-                    .addContainerGap(74, Short.MAX_VALUE)
-                    .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addGap(69, 69, 69)))
+                .addGroup(jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel13Layout.createSequentialGroup()
+                        .addGap(37, 37, 37)
+                        .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addGroup(jPanel13Layout.createSequentialGroup()
+                        .addGap(72, 72, 72)
+                        .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addContainerGap(49, Short.MAX_VALUE))
         );
         jPanel13Layout.setVerticalGroup(
             jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel13Layout.createSequentialGroup()
-                .addGap(75, 75, 75)
+                .addGap(7, 7, 7)
+                .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(38, Short.MAX_VALUE))
-            .addGroup(jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                .addGroup(jPanel13Layout.createSequentialGroup()
-                    .addGap(16, 16, 16)
-                    .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addContainerGap(319, Short.MAX_VALUE)))
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
 
-        jPanel1.add(jPanel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 150, 450, 400));
+        jPanel1.add(jPanel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 150, 450, 330));
 
         jPanel15.setBackground(new java.awt.Color(153, 153, 255));
         jPanel15.setBorder(new javax.swing.border.MatteBorder(null));
-
-        SliderTiempoReal.setMaximum(1000);
-        SliderTiempoReal.setMinimum(100);
-        SliderTiempoReal.setPaintLabels(true);
-        SliderTiempoReal.setPaintTicks(true);
-        SliderTiempoReal.setValue(500);
 
         jLabel20.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         jLabel20.setForeground(new java.awt.Color(255, 255, 255));
@@ -695,44 +985,66 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel28.setText("<html><center>Intercambiar Algoritmo</center></html>");
         jLabel28.setHorizontalTextPosition(javax.swing.SwingConstants.CENTER);
 
+        cycleDurationSlider.setFont(new java.awt.Font("Yu Gothic UI Semibold", 0, 12)); // NOI18N
+        cycleDurationSlider.setMajorTickSpacing(1000);
+        cycleDurationSlider.setMaximum(5000);
+        cycleDurationSlider.setMinimum(500);
+        cycleDurationSlider.setMinorTickSpacing(500);
+        cycleDurationSlider.setPaintLabels(true);
+        cycleDurationSlider.setPaintTicks(true);
+        cycleDurationSlider.setSnapToTicks(true);
+        cycleDurationSlider.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
+        cycleDurationSlider.setEnabled(false);
+        cycleDurationSlider.setOpaque(true);
+        cycleDurationSlider.addChangeListener(new javax.swing.event.ChangeListener() {
+            public void stateChanged(javax.swing.event.ChangeEvent evt) {
+                cycleDurationSliderStateChanged(evt);
+            }
+        });
+
         javax.swing.GroupLayout jPanel15Layout = new javax.swing.GroupLayout(jPanel15);
         jPanel15.setLayout(jPanel15Layout);
         jPanel15Layout.setHorizontalGroup(
             jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel15Layout.createSequentialGroup()
                 .addGap(64, 64, 64)
-                .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(79, Short.MAX_VALUE))
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel15Layout.createSequentialGroup()
-                .addGap(23, 23, 23)
-                .addComponent(jLabel28, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addComponent(jLabel27, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(24, 24, 24))
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel15Layout.createSequentialGroup()
-                .addGap(49, 49, 49)
-                .addComponent(BotonCambiarAlgoritmo)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addComponent(SliderTiempoReal, javax.swing.GroupLayout.PREFERRED_SIZE, 145, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(35, 35, 35))
+                .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 296, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+            .addGroup(jPanel15Layout.createSequentialGroup()
+                .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel15Layout.createSequentialGroup()
+                        .addContainerGap()
+                        .addComponent(jLabel28, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addGroup(jPanel15Layout.createSequentialGroup()
+                        .addGap(23, 23, 23)
+                        .addComponent(BotonCambiarAlgoritmo)))
+                .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel15Layout.createSequentialGroup()
+                        .addGap(61, 61, 61)
+                        .addComponent(cycleDurationSlider, javax.swing.GroupLayout.PREFERRED_SIZE, 236, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(0, 11, Short.MAX_VALUE))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel15Layout.createSequentialGroup()
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addComponent(jLabel27, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(40, 40, 40))))
         );
         jPanel15Layout.setVerticalGroup(
             jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel15Layout.createSequentialGroup()
-                .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jLabel27, javax.swing.GroupLayout.PREFERRED_SIZE, 17, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jLabel28, javax.swing.GroupLayout.PREFERRED_SIZE, 17, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                .addContainerGap()
+                .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(12, 12, 12)
+                .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
                     .addGroup(jPanel15Layout.createSequentialGroup()
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 10, Short.MAX_VALUE)
-                        .addComponent(SliderTiempoReal, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(8, 8, 8))
-                    .addGroup(jPanel15Layout.createSequentialGroup()
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                        .addComponent(jLabel28, javax.swing.GroupLayout.PREFERRED_SIZE, 17, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(BotonCambiarAlgoritmo)
-                        .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
+                        .addGap(12, 12, 12))
+                    .addGroup(jPanel15Layout.createSequentialGroup()
+                        .addComponent(jLabel27, javax.swing.GroupLayout.PREFERRED_SIZE, 17, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(cycleDurationSlider, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                .addContainerGap(15, Short.MAX_VALUE))
         );
 
         jPanel1.add(jPanel15, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 10, 450, 140));
@@ -740,7 +1052,7 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel16.setBackground(new java.awt.Color(204, 0, 153));
         jPanel16.setBorder(new javax.swing.border.MatteBorder(null));
 
-        jLabel24.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
+        jLabel24.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
         jLabel24.setForeground(new java.awt.Color(255, 255, 255));
         jLabel24.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         jLabel24.setText("<html><center>Escritura en JSON/CSV</center></html>");
@@ -749,30 +1061,53 @@ public class Interfaz extends javax.swing.JFrame {
         BotonEscribir.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         BotonEscribir.setText("Escribir");
 
+        PanelTerminados.setPreferredSize(new java.awt.Dimension(223, 174));
+        PanelTerminados.setLayout(new java.awt.BorderLayout());
+
+        jLabel29.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
+        jLabel29.setForeground(new java.awt.Color(255, 255, 255));
+        jLabel29.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        jLabel29.setText("<html><cenater>Terminados</center></html>");
+        jLabel29.setHorizontalTextPosition(javax.swing.SwingConstants.CENTER);
+
         javax.swing.GroupLayout jPanel16Layout = new javax.swing.GroupLayout(jPanel16);
         jPanel16.setLayout(jPanel16Layout);
         jPanel16Layout.setHorizontalGroup(
             jPanel16Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel16Layout.createSequentialGroup()
+                .addGap(31, 31, 31)
+                .addComponent(PanelTerminados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 47, Short.MAX_VALUE)
                 .addGroup(jPanel16Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel16Layout.createSequentialGroup()
-                        .addGap(58, 58, 58)
-                        .addComponent(jLabel24, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(jPanel16Layout.createSequentialGroup()
-                        .addGap(119, 119, 119)
-                        .addComponent(BotonEscribir, javax.swing.GroupLayout.PREFERRED_SIZE, 184, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addContainerGap(85, Short.MAX_VALUE))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel16Layout.createSequentialGroup()
+                        .addComponent(jLabel24, javax.swing.GroupLayout.PREFERRED_SIZE, 81, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(51, 51, 51))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel16Layout.createSequentialGroup()
+                        .addComponent(BotonEscribir, javax.swing.GroupLayout.PREFERRED_SIZE, 106, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(41, 41, 41))))
+            .addGroup(jPanel16Layout.createSequentialGroup()
+                .addGap(67, 67, 67)
+                .addComponent(jLabel29, javax.swing.GroupLayout.PREFERRED_SIZE, 152, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
         jPanel16Layout.setVerticalGroup(
             jPanel16Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel16Layout.createSequentialGroup()
-                .addComponent(jLabel24, javax.swing.GroupLayout.PREFERRED_SIZE, 63, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(5, 5, 5)
+                .addComponent(jLabel29, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(BotonEscribir, javax.swing.GroupLayout.PREFERRED_SIZE, 56, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(0, 53, Short.MAX_VALUE))
+                .addGroup(jPanel16Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel16Layout.createSequentialGroup()
+                        .addGap(51, 51, 51)
+                        .addComponent(jLabel24, javax.swing.GroupLayout.PREFERRED_SIZE, 29, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(BotonEscribir)
+                        .addGap(0, 0, Short.MAX_VALUE))
+                    .addComponent(PanelTerminados, javax.swing.GroupLayout.DEFAULT_SIZE, 210, Short.MAX_VALUE))
+                .addContainerGap())
         );
 
-        jPanel1.add(jPanel16, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 550, 450, 180));
+        jPanel1.add(jPanel16, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 480, 450, 250));
 
         jTabbedPane1.addTab("Simulador", jPanel1);
 
@@ -844,30 +1179,92 @@ public class Interfaz extends javax.swing.JFrame {
 
     private void BotonIniciarActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonIniciarActionPerformed
         // TODO add your handling code here:
-        // 1. Mover todos los procesos de "Nuevos" a "Listos"
-            System.out.println("--- ADMITIENDO PROCESOS ---");
-            while (!colaNuevos.isEmpty()) {
-                ProccesFabrication.Process p = colaNuevos.pop();
-                p.setState(ProccesFabrication.ProcessState.READY); 
-                colaListos.insert(p);
-                System.out.println("Proceso " + p.getName() + " admitido -> LISTO");
+            // 1. Lee la selección del JComboBox
+            String nombreAlgoritmoSeleccionado = (String) jComboAlgoritmos.getSelectedItem();
+            Planificacion.SchedulerAlgorithm algoritmo = seleccionarAlgoritmo(nombreAlgoritmoSeleccionado); // Usa el método que te di antes
+
+            // Verifica si se pudo crear el algoritmo
+            if (algoritmo == null) {
+                JOptionPane.showMessageDialog(this,
+                        "No se pudo iniciar la simulación.\nAlgoritmo '" + nombreAlgoritmoSeleccionado + "' no reconocido o no implementado.",
+                        "Error de Algoritmo", JOptionPane.ERROR_MESSAGE);
+                return; // Detiene la acción si el algoritmo no es válido
             }
 
-            // --- AÑADE ESTA LÍNEA ---
-            // 2. Llama al método para que DIBUJE las tarjetas en el panel de Listos
-            actualizarPanelListos();
-            // --- FIN DE LÍNEA AÑADIDA ---
+            final Planificacion.SchedulerAlgorithm algoritmoFinal = algoritmo; // Necesario para usar dentro del hilo lambda
 
-            // 3. TODO: Aquí es donde iniciarías el Timer (reloj)
-            // timerSimulacion.start();
-            System.out.println("--- SIMULACIÓN INICIADA ---");
+            // 2. Cuenta cuántos procesos hay en Nuevos (de forma segura)
+            int totalProcesos;
+            try {
+                // Intenta adquirir el semáforo brevemente para no bloquear la GUI
+                if (!Interfaz.semaforoNuevos.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+                     JOptionPane.showMessageDialog(this, "Error: No se pudo acceder a la cola de Nuevos.", "Error de Concurrencia", JOptionPane.ERROR_MESSAGE);
+                     return; // No se pudo contar, no inicia
+                }
+                try {
+                    totalProcesos = Interfaz.colaNuevos.getSize();
+                } finally {
+                    Interfaz.semaforoNuevos.release(); // Libera el semáforo
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // Restaura el estado interrumpido
+                JOptionPane.showMessageDialog(this, "Error al contar procesos iniciales.", "Error de Hilo", JOptionPane.ERROR_MESSAGE);
+                return; // No inicia si hubo interrupción
+            }
 
-            // 4. Vuelve a validar los botones
+            // Verifica si hay procesos para simular
+            if (totalProcesos == 0) {
+                JOptionPane.showMessageDialog(this, "No hay procesos en la cola de 'Nuevos' para iniciar.", "Simulación Vacía", JOptionPane.WARNING_MESSAGE);
+                return; // No inicia si no hay procesos
+            }
+
+            // --- ¡Inicio de la Simulación! ---
+            System.out.println("GUI: Iniciando simulación con " + totalProcesos + " procesos y algoritmo " + nombreAlgoritmoSeleccionado + "...");
+
+            // 3. Lanza el MOTOR DE SIMULACIÓN (tu ConsoleSimulator/MotorSimulacion) en un HILO NUEVO
+            //    Esto es CRUCIAL para que la GUI no se congele.
+            new Thread(() -> {
+                // Llama a los métodos ESTÁTICOS de tu clase MotorSimulacion
+                // Asegúrate de usar la versión con PMP controlando admisión (la última que te di)
+                MotorSimulacion.iniciarSimulacion(algoritmoFinal);   // Inicia los hilos PMP, RR, GestorIO
+                MotorSimulacion.esperarFinSimulacion(totalProcesos); // Espera a que terminen los procesos
+                MotorSimulacion.detenerSimulacion();                 // Detiene los hilos auxiliares
+
+                // --- Simulación Terminada ---
+                // Código a ejecutar DESPUÉS de que el motor termine.
+                // Debe ejecutarse en el hilo de la GUI (EDT).
+                SwingUtilities.invokeLater(() -> {
+                    if (guiTimer != null) {
+                        guiTimer.stop(); // Detiene el refresco de la GUI
+                        System.out.println("GUI: Timer detenido.");
+                    }
+                    actualizarEstadoBotones(); // Reactiva botones Iniciar/Crear
+                    System.out.println("GUI: Simulación finalizada en el backend.");
+                    JOptionPane.showMessageDialog(Interfaz.this, // Usa Interfaz.this como parent
+                            "Simulación completada con éxito.",
+                            "Simulación Terminada", JOptionPane.INFORMATION_MESSAGE);
+                    // Refresca los paneles una última vez para mostrar el estado final
+                    actualizarPanelesDeColas();
+                });
+            }, "HiloMotorSimulacion").start(); // Inicia el hilo del motor
+
+            // 4. Inicia el TIMER de la GUI (el que llama a actualizarPanelesDeColas cada 250ms)
+            iniciarTimerGUI();
+
+            // 5. Actualiza el estado de los botones (Deshabilita Iniciar, Crear, etc.)
             actualizarEstadoBotones();
-
-            // 5. Deshabilita el botón Iniciar
-            BotonIniciar.setEnabled(false);
     }//GEN-LAST:event_BotonIniciarActionPerformed
+
+    private void jComboAlgoritmosActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jComboAlgoritmosActionPerformed
+        // TODO add your handling code here:
+    }//GEN-LAST:event_jComboAlgoritmosActionPerformed
+
+    private void cycleDurationSliderStateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_cycleDurationSliderStateChanged
+        // TODO add your handling code here:
+        //int newSpeed = this.cycleDurationSlider.getValue();
+        //System.out.println(newSpeed);
+        //getOperatingSystem().getSystemClock().setCycleDuration(newSpeed);
+    }//GEN-LAST:event_cycleDurationSliderStateChanged
 
     /**
      * @param args the command line arguments
@@ -917,22 +1314,20 @@ public class Interfaz extends javax.swing.JFrame {
     private javax.swing.JPanel PanelListos_Suspendidos;
     private javax.swing.JPanel PanelProcesoEjecucion;
     private javax.swing.JPanel PanelRendimiento;
+    private javax.swing.JPanel PanelTerminados;
     private javax.swing.JPanel PanelTerminadosEventos;
-    private javax.swing.JSlider SliderTiempoReal;
-    private javax.swing.JTextField TextCicloActual;
-    private javax.swing.JTextField TextDuracion;
-    private javax.swing.JTextField TextEstado;
+    private javax.swing.JLabel TextRelojGlobal;
     private javax.swing.JButton btnVerNuevos;
+    private javax.swing.JSlider cycleDurationSlider;
     private javax.swing.JComboBox<String> jComboAlgoritmos;
-    private javax.swing.JLabel jLabel11;
+    private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel12;
     private javax.swing.JLabel jLabel13;
-    private javax.swing.JLabel jLabel14;
-    private javax.swing.JLabel jLabel15;
     private javax.swing.JLabel jLabel16;
     private javax.swing.JLabel jLabel17;
     private javax.swing.JLabel jLabel18;
     private javax.swing.JLabel jLabel19;
+    private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel20;
     private javax.swing.JLabel jLabel21;
     private javax.swing.JLabel jLabel22;
@@ -942,6 +1337,12 @@ public class Interfaz extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel26;
     private javax.swing.JLabel jLabel27;
     private javax.swing.JLabel jLabel28;
+    private javax.swing.JLabel jLabel29;
+    private javax.swing.JLabel jLabel3;
+    private javax.swing.JLabel jLabel4;
+    private javax.swing.JLabel jLabel5;
+    private javax.swing.JLabel jLabel6;
+    private javax.swing.JLabel jLabel7;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel11;
     private javax.swing.JPanel jPanel13;
@@ -953,5 +1354,11 @@ public class Interfaz extends javax.swing.JFrame {
     private javax.swing.JPanel jPanel7;
     private javax.swing.JPanel jPanel9;
     private javax.swing.JTabbedPane jTabbedPane1;
+    private javax.swing.JLabel lblIdProcesoCPU;
+    private javax.swing.JLabel lblMarProcesoCPU;
+    private javax.swing.JLabel lblNombreProcesoCPU;
+    private javax.swing.JLabel lblPcProcesoCPU;
+    private javax.swing.JLabel lblStatusProcesoCPU;
+    private javax.swing.JLabel lblTipoProcesoCPU;
     // End of variables declaration//GEN-END:variables
 }

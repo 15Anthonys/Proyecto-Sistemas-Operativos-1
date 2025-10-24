@@ -3,20 +3,22 @@ package Planificacion;
 import EstructurasDeDatos.Cola;
 import ProccesFabrication.Process;
 
-// ¿Dice "implements SchedulerAlgorithm"?
-public class FCFSAlgorithm implements SchedulerAlgorithm {
+public class FCFSAlgorithm implements SchedulerAlgorithm { // Asegúrate que implemente la interfaz
 
-    // ¿Tiene @Override? (Ayuda a detectar errores)
     @Override
-    // ¿La firma es IDÉNTICA a la de la interfaz?
     public Process seleccionarSiguiente(Cola<Process> colaListos) {
         if (colaListos.isEmpty()) {
-            return null;
+            return null; // Devuelve null si la cola está vacía
         }
-        // Devuelve el primero sin sacarlo
-        return colaListos.getpFirst().getData();
+        // --- ¡CAMBIO CRÍTICO AQUÍ! ---
+        // Usa pop() para SACAR el primer proceso de la cola.
+        return colaListos.pop();
+        // --- FIN DEL CAMBIO ---
     }
 
     @Override
-    public void setQuantum(int quantum) { /* No usa */ }
+    public void setQuantum(int quantum) {
+        // FCFS no usa quantum, así que este método no hace nada.
+        // Déjalo vacío como lo tienes.
+    }
 }
