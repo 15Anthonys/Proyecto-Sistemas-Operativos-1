@@ -5,8 +5,6 @@ import EstructurasDeDatos.Nodo;
 import Planificacion.*;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
-import java.util.ArrayList;
-import java.util.concurrent.Semaphore;
 
 /**
  * Simulador de consola que implementa un Planificador de Mediano Plazo (PMP)
@@ -20,27 +18,24 @@ public class MotorSimulacion {
     static Cola<Process> colaListos = Interfaz.colaListos;
     static Cola<Process> colaBloqueados = Interfaz.colaBloqueados;
     static Cola<Process> colaTerminados = Interfaz.colaTerminados;
-    
+
     // --- Referencias a los semáforos GLOBALES (de Interfaz) ---
-    static Semaphore semaforoNuevos = Interfaz.semaforoNuevos;
-    static Semaphore semaforoListos = Interfaz.semaforoListos;
-    static Semaphore semaforoBloqueados = Interfaz.semaforoBloqueados;
-    static Semaphore semaforoTerminados = Interfaz.semaforoTerminados;
+    static SimpleSemaphore semaforoNuevos = Interfaz.semaforoNuevos;
+    static SimpleSemaphore semaforoListos = Interfaz.semaforoListos;
+    static SimpleSemaphore semaforoBloqueados = Interfaz.semaforoBloqueados;
+    static SimpleSemaphore semaforoTerminados = Interfaz.semaforoTerminados;
 
     // --- Threads ---
-    static Planificador planificador;
+    public static Planificador planificador;
     static GestorIO gestorIO;
     static PlanificadorMedianoPlazo pmp;
-    
+
     static Thread hiloPlanificador;
     static Thread hiloGestorIO;
     static Thread hiloPMP;
-    
-    // Esta lista AHORA la llenará el PMP
-    public static ArrayList<Thread> hilosProcesos = new ArrayList<>();
-    
-    // Semáforo para proteger la lista de hilos
-    public static Semaphore semaforoHilosProcesos = new Semaphore(1);
+
+    public static Cola<Thread> hilosProcesos = new Cola<>();
+    public static SimpleSemaphore semaforoHilosProcesos = new SimpleSemaphore(1);
 
     public static void main(String[] args) {
 
@@ -107,65 +102,55 @@ public class MotorSimulacion {
     static void iniciarSimulacion(SchedulerAlgorithm algoritmo) {
         System.out.println("Iniciando simulación...");
 
-        // <<< ¡CAMBIO! --- Volvemos a poner el bucle ---
-        while (!Interfaz.colaNuevos.isEmpty()) {
-            Process p = null;
-            try {
-                // Saca de Nuevos
-                Interfaz.semaforoNuevos.acquire();
-                try {
-                    p = Interfaz.colaNuevos.pop();
-                } finally {
-                    Interfaz.semaforoNuevos.release();
-                }
-                
-                if (p == null) continue;
-
-                p.setState(ProcessState.READY); 
-                
-                // Inicia el Hilo
-                Thread t = new Thread(p, "Hilo-" + p.getName());
-                hilosProcesos.add(t); // (Protección de semáforo omitida por simplicidad, está bien aquí)
-                t.start();
-
-                // Mete en Listos (RAM)
-                Interfaz.semaforoListos.acquire();
-                try {
-                    Interfaz.colaListos.insert(p);
-                } finally {
-                    Interfaz.semaforoListos.release();
-                }
-                
-                // <<< ¡MUY IMPORTANTE! --- Incrementa el contador 6 veces ---
-                Interfaz.contadorProcesosEnMemoria.incrementAndGet();
-                System.out.println("...Cargando " + p.getName() + " en RAM. (Total en RAM: " + Interfaz.contadorProcesosEnMemoria.get() + ")");
-
-            } catch(InterruptedException e){
-                Thread.currentThread().interrupt();
-                System.err.println("Failed to add process "+ (p != null ? p.getName() : "") +" to ready queue: "+ e.getMessage());
-            }
-        }
-        System.out.println("¡TODOS LOS 6 PROCESOS CARGADOS EN RAM!");
-
-        // Start the Planificador (Corto Plazo)
+        // Iniciar Planificador primero
         planificador = new Planificador(algoritmo);
+        // Duración de ciclo desde config/slider
+        int ms = ConfigIO.loadCycleMs();
+        planificador.setCycleMs(ms);
         hiloPlanificador = new Thread(planificador, "Hilo-Planificador");
         hiloPlanificador.start();
         System.out.println("Hilo Planificador (Corto Plazo) iniciado.");
 
-        // Start the GestorIO
+        // Mover procesos de Nuevos a RAM/READY y lanzar hilos de proceso
+        while (!Interfaz.colaNuevos.isEmpty()) {
+            Process p = null;
+            try {
+                Interfaz.semaforoNuevos.acquire();
+                try { p = Interfaz.colaNuevos.pop(); }
+                finally { Interfaz.semaforoNuevos.release(); }
+
+                if (p == null) continue;
+
+                p.setState(ProcessState.READY);
+                p.arrivalCycle = Interfaz.globalClock.get();
+
+                Thread t = new Thread(p, "Hilo-" + p.getName());
+                // hilosProcesos.add(t); // eliminado
+                hilosProcesos.insert(t);
+                t.start();
+
+                Interfaz.contadorProcesosEnMemoria.incrementAndGet();
+                planificador.admitirAListos(p, Interfaz.globalClock.get());
+            } catch(InterruptedException e){
+                Thread.currentThread().interrupt();
+                System.err.println("Error al admitir proceso a READY.");
+            }
+        }
+        System.out.println("Procesos cargados en RAM y encolados a READY.");
+
+        // GestorIO
         gestorIO = new GestorIO();
         hiloGestorIO = new Thread(gestorIO, "Hilo-GestorIO");
         hiloGestorIO.start();
         System.out.println("Hilo GestorIO iniciado.");
-        
-        // Start the PlanificadorMedianoPlazo
+
+        // PMP
         pmp = new PlanificadorMedianoPlazo();
         hiloPMP = new Thread(pmp, "Hilo-PMP");
         hiloPMP.start();
         System.out.println("Hilo Planificador de Mediano Plazo iniciado.");
 
-        System.out.println("\n--- Simulación en curso... (Ctrl+C para detener si se cuelga) ---");
+        System.out.println("\n--- Simulación en curso ---");
     }
 
     /**
@@ -249,11 +234,10 @@ public class MotorSimulacion {
     /**
      * Imprime de forma segura el contenido de una cola.
      */
-    static void imprimirCola(Cola<Process> cola, Semaphore sem) {
+    static void imprimirCola(Cola<Process> cola, SimpleSemaphore sem) {
         StringBuilder sb = new StringBuilder("[ ");
         if (sem != null) {
             try {
-                // Pide semáforo para leer la cola
                 sem.acquire();
                 try {
                     Nodo<Process> actual = cola.getpFirst();
@@ -265,16 +249,15 @@ public class MotorSimulacion {
                     sem.release();
                 }
             } catch (InterruptedException e) {
-                 Thread.currentThread().interrupt();
-                 sb.append(" ERROR AL LEER COLA ");
+                Thread.currentThread().interrupt();
+                sb.append(" ERROR AL LEER COLA ");
             }
         } else {
-             // Para colas no compartidas (aunque ya no deberíamos tener)
-             Nodo<Process> actual = cola.getpFirst();
-             while (actual != null) {
-                 sb.append(actual.getData().getName()).append(" ");
-                 actual = actual.getPnext();
-             }
+            Nodo<Process> actual = cola.getpFirst();
+            while (actual != null) {
+                sb.append(actual.getData().getName()).append(" ");
+                actual = actual.getPnext();
+            }
         }
         sb.append("]");
         System.out.print(sb.toString());

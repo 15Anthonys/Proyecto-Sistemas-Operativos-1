@@ -1,16 +1,17 @@
 package Planificacion;
 
 import ProccesFabrication.Process;
-import EstructurasDeDatos.Cola; // ¡Usa tu EDD!
+import EstructurasDeDatos.Cola;
 
 public interface SchedulerAlgorithm {
-    
-    /**
-     * Revisa la cola de listos y DEVUELVE al proceso que
-     * debe ejecutarse a continuación.
-     * ¡Importante: Este método NO lo saca de la cola!
-     */
-    Process seleccionarSiguiente(Cola<Process> colaListos);
-    
-    void setQuantum(int quantum);
+    String name();
+    boolean isPreemptive();
+    void setQuantum(int q);
+    int getQuantum();
+    // Encolar en estructura del algoritmo (puede usar cola global)
+    void enqueue(Cola<Process> ready, Process p, long now);
+    // Seleccionar siguiente desde cola(s)
+    Process pickNext(Cola<Process> ready, long now);
+    // ¿Debe expropiar al actual?
+    boolean shouldPreempt(Process running, Cola<Process> ready, long now);
 }

@@ -11,26 +11,6 @@ package ProccesFabrication;
 
 
 public enum ProcessState {
-    NEW("Nuevo"),
-    READY("Listo"),
-    RUNNING("Ejecutando"),
-    BLOCKED("Bloqueado"),
-    TERMINATED("Terminado"),
-    SUSPENDED_READY("Suspendido Listo"),
-    SUSPENDED_BLOCKED("Suspendido Bloqueado");
-    
-    private final String description;
-    
-    ProcessState(String description) {
-        this.description = description;
-    }
-    
-    public String getDescription() {
-        return description;
-    }
-    
-    @Override
-    public String toString() {
-        return description;
-    }
+    NEW, READY, RUNNING, BLOCKED, TERMINATED,
+    SUSPENDED_READY, SUSPENDED_BLOCKED
 }

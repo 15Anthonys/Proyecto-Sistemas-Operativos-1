@@ -1,163 +1,58 @@
 package Planificacion;
 
-import EstructurasDeDatos.Cola;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 import soplanificacion.Interfaz;
-import soplanificacion.MotorSimulacion;
-import java.util.concurrent.Semaphore;
+import EstructurasDeDatos.Nodo;
 
 /**
  * Hilo PMP (VERSIÓN CORREGIDA CON CONTADOR ATÓMICO)
  * Controla Admisión, Suspensión y Reanudación basado en un contador global.
  */
 public class PlanificadorMedianoPlazo implements Runnable {
-    
-    private boolean simulacionActiva = true;
-    private final int MAX_PROCESOS_EN_MEMORIA = 2; // (Sigue en 2)
+    private volatile boolean running = true;
+    private final int MAX_EN_RAM = 5;
 
-    // Referencias a todos los semáforos
-    private Semaphore semNuevos = Interfaz.semaforoNuevos;
-    private Semaphore semListos = Interfaz.semaforoListos;
-    private Semaphore semBloqueados = Interfaz.semaforoBloqueados;
-    private Semaphore semListosSusp = Interfaz.semaforoListosSuspendidos;
-    private Semaphore semBloqueadosSusp = Interfaz.semaforoBloqueadosSuspendidos;
+    public void detener(){ running = false; }
 
     @Override
     public void run() {
-        while (simulacionActiva) {
-            try {
-                Thread.sleep(500); // Revisa 2 veces por segundo
-                
-                // <<< ¡CAMBIO CLAVE! --- Lee el contador global ---
-                int procesosEnMemoria = Interfaz.contadorProcesosEnMemoria.get();
-                
-                // --- LÓGICA DE ADMISIÓN (Nuevos -> Listos) ---
-                /*
-                if (procesosEnMemoria < MAX_PROCESOS_EN_MEMORIA) {
-                    Process nuevoProceso = null;
-                    semNuevos.acquire();
-                    try {
-                        if (!Interfaz.colaNuevos.isEmpty()) {
-                            nuevoProceso = Interfaz.colaNuevos.pop();
-                        }
-                    } finally {
-                        semNuevos.release();
-                    }
-                    
-                    if (nuevoProceso != null) {
-                        System.out.println("(!) PMP: Admitiendo " + nuevoProceso.getName() + " (Nuevos -> RAM)");
-                        iniciarHiloProceso(nuevoProceso);
-                        reanudarProceso(nuevoProceso, ProcessState.READY, Interfaz.colaListos, semListos);
-                        
-                        // <<< ¡CAMBIO CLAVE! --- Incrementa el contador ---
-                        Interfaz.contadorProcesosEnMemoria.incrementAndGet();
-
-                    }
-                }*/
-                
-                // --- LÓGICA DE SUSPENSIÓN (RAM -> Disco) ---
-                if (procesosEnMemoria > MAX_PROCESOS_EN_MEMORIA) {
-                    Process victima = null;
-                    semListos.acquire();
-                    try {
-                        if (!Interfaz.colaListos.isEmpty()) {
-                            victima = Interfaz.colaListos.pop();
-                        }
-                    } finally {
-                        semListos.release();
-                    }
-                    
-                    if (victima != null) {
-                        System.out.println("(!) PMP: Memoria llena. Suspendiendo " + victima.getName() + " (Listos -> Disco)");
-                        suspenderProceso(victima, ProcessState.SUSPENDED_READY, Interfaz.colaListosSuspendidos, semListosSusp);
-
-                        // <<< ¡CAMBIO CLAVE! --- Decrementa el contador ---
-                        Interfaz.contadorProcesosEnMemoria.decrementAndGet();
-                        
+        while(running){
+            try { Thread.sleep(300); } catch (InterruptedException ignored){}
+            // Si hay demasiados en RAM, suspender de READY
+            int enRam = Interfaz.contadorProcesosEnMemoria.get();
+            if (enRam > MAX_EN_RAM){
+                // mover 1 de READY a READY SUSPENDIDO
+                try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                Process p = null;
+                try { p = Interfaz.colaListos.pop(); }
+                finally { Interfaz.semaforoListos.release(); }
+                if (p != null){
+                    p.setState(ProcessState.SUSPENDED_READY);
+                    try { Interfaz.semaforoListosSuspendidos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                    try { Interfaz.colaListosSuspendidos.insert(p); }
+                    finally { Interfaz.semaforoListosSuspendidos.release(); }
+                    Interfaz.contadorProcesosEnMemoria.decrementAndGet();
+                }
+            } else {
+                // Si hay espacio, traer de SUSPENDED_READY a READY
+                try { Interfaz.semaforoListosSuspendidos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                Process p = null;
+                try { p = Interfaz.colaListosSuspendidos.pop(); }
+                finally { Interfaz.semaforoListosSuspendidos.release(); }
+                if (p != null){
+                    p.setState(ProcessState.READY);
+                    Interfaz.contadorProcesosEnMemoria.incrementAndGet();
+                    // Encolar por el algoritmo actual (si existe)
+                    if (soplanificacion.MotorSimulacion.planificador != null){
+                        soplanificacion.MotorSimulacion.planificador.admitirAListos(p, Interfaz.globalClock.get());
                     } else {
-                        semBloqueados.acquire();
-                        try {
-                            if (!Interfaz.colaBloqueados.isEmpty()) {
-                                victima = Interfaz.colaBloqueados.pop();
-                            }
-                        } finally {
-                            semBloqueados.release();
-                        }
-                        
-                        if (victima != null) {
-                            System.out.println("(!) PMP: Memoria llena. Suspendiendo " + victima.getName() + " (Bloqueados -> Disco)");
-                            suspenderProceso(victima, ProcessState.SUSPENDED_BLOCKED, Interfaz.colaBloqueadosSuspendidos, semBloqueadosSusp);
-                            
-                            // <<< ¡CAMBIO CLAVE! --- Decrementa el contador ---
-                            Interfaz.contadorProcesosEnMemoria.decrementAndGet();
-                        }
+                        try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e){ Thread.currentThread().interrupt(); continue; }
+                        try { Interfaz.colaListos.insert(p); }
+                        finally { Interfaz.semaforoListos.release(); }
                     }
                 }
-                
-                // --- LÓGICA DE REANUDACIÓN (Disco -> RAM) ---
-                if (procesosEnMemoria < MAX_PROCESOS_EN_MEMORIA) {
-                    Process reanudado = null;
-                    semListosSusp.acquire();
-                    try {
-                        if (!Interfaz.colaListosSuspendidos.isEmpty()) {
-                            reanudado = Interfaz.colaListosSuspendidos.pop();
-                        }
-                    } finally {
-                        semListosSusp.release();
-                    }
-                    
-                    if (reanudado != null) {
-                        System.out.println("(!) PMP: Espacio libre. Reanudando " + reanudado.getName() + " (Disco -> RAM)");
-                        reanudarProceso(reanudado, ProcessState.READY, Interfaz.colaListos, semListos);
-                        
-                        // <<< ¡CAMBIO CLAVE! --- Incrementa el contador ---
-                        Interfaz.contadorProcesosEnMemoria.incrementAndGet();
-                    }
-                }
-                
-            } catch (InterruptedException e) {
-                System.out.println("Planificador de Mediano Plazo (PMP) interrumpido.");
-                simulacionActiva = false;
             }
         }
-    }
-    
-    // (El resto de la clase: iniciarHiloProceso, suspenderProceso, 
-    // reanudarProceso, detener... son idénticos a los que te di antes)
-    
-    private void iniciarHiloProceso(Process p) throws InterruptedException {
-        Thread t = new Thread(p, "Hilo-" + p.getName());
-        MotorSimulacion.semaforoHilosProcesos.acquire();
-        try {
-            MotorSimulacion.hilosProcesos.add(t);
-        } finally {
-            MotorSimulacion.semaforoHilosProcesos.release();
-        }
-        t.start();
-    }
-    
-    private void suspenderProceso(Process p, ProcessState nuevoEstado, Cola<Process> colaDestino, Semaphore semDestino) throws InterruptedException {
-        p.setState(nuevoEstado); 
-        semDestino.acquire();
-        try {
-            colaDestino.insert(p); 
-        } finally {
-            semDestino.release();
-        }
-    }
-    
-    private void reanudarProceso(Process p, ProcessState nuevoEstado, Cola<Process> colaDestino, Semaphore semDestino) throws InterruptedException {
-        p.setState(nuevoEstado); 
-        semDestino.acquire();
-        try {
-            colaDestino.insert(p); 
-        } finally {
-            semDestino.release();
-        }
-    }
-    
-    public void detener() {
-        this.simulacionActiva = false;
     }
 }

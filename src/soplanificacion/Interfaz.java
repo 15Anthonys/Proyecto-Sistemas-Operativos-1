@@ -5,18 +5,15 @@
 package soplanificacion;
 import EstructurasDeDatos.Cola;
 import EstructurasDeDatos.Nodo;
-import Planificacion.*; // Importa tus clases de Planificacion (Planificador, GestorIO, PMP, Algoritmo)
+import Planificacion.*; 
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 
-import javax.swing.*; // Para componentes Swing (Timer, JLabel, etc.)
-import java.awt.*; // Para Layouts (BorderLayout)
+import javax.swing.*;
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  *
@@ -37,37 +34,30 @@ public class Interfaz extends javax.swing.JFrame {
     
     
 // --- EDD Original (Solo para "Nuevos") ---
-    public static Cola<Process> colaNuevos = new Cola<>(); 
+    public static Cola<Process> colaNuevos = new Cola<>();
 
-    // --- EDD COMPARTIDAS (Protegidas) ---
-    // ¡Volvemos a usar Cola.java para todo!
+    // --- EDD COMPARTIDAS ---
     public static Cola<Process> colaListos = new Cola<>();
     public static Cola<Process> colaBloqueados = new Cola<>();
     public static Cola<Process> colaTerminados = new Cola<>();
 
-    // --- SEMÁFOROS (Los "Candados") ---
-    
-    public static Semaphore semaforoNuevos = new Semaphore(1);
-    // (Estos ya estaban bien inicializados)
-    public static Semaphore semaforoListos = new Semaphore(1);
-    public static Semaphore semaforoBloqueados = new Semaphore(1);
-    public static Semaphore semaforoTerminados = new Semaphore(1);
-    public static Semaphore semaforoCPU = new Semaphore(1);
-    
-    public static Semaphore semContadorListos = new Semaphore(0);
-    
-    
+    // Colas de suspendidos (requerimiento)
     public static Cola<Process> colaListosSuspendidos = new Cola<>();
     public static Cola<Process> colaBloqueadosSuspendidos = new Cola<>();
-    
-    // --- NUEVOS Semáforos de DISCO ---
-    public static Semaphore semaforoListosSuspendidos = new Semaphore(1);
-    public static Semaphore semaforoBloqueadosSuspendidos = new Semaphore(1);
-    
-    public static AtomicInteger contadorProcesosEnMemoria = new AtomicInteger(0);
-    
-    public static AtomicInteger globalClock = new AtomicInteger(0);
-    
+
+    // --- Semáforos propios (sin java.util.concurrent) ---
+    public static final SimpleSemaphore semaforoNuevos = new SimpleSemaphore(1);
+    public static final SimpleSemaphore semaforoListos = new SimpleSemaphore(1);
+    public static final SimpleSemaphore semaforoBloqueados = new SimpleSemaphore(1);
+    public static final SimpleSemaphore semaforoTerminados = new SimpleSemaphore(1);
+    public static final SimpleSemaphore semaforoListosSuspendidos = new SimpleSemaphore(1);
+    public static final SimpleSemaphore semaforoBloqueadosSuspendidos = new SimpleSemaphore(1);
+
+    // --- Contadores globales (sin Atomic*) ---
+    public static final SafeCounter globalClock = new SafeCounter(0);
+    public static final SafeCounter contadorProcesosEnMemoria = new SafeCounter(0);
+
+    // Proceso en CPU actual
     public static volatile Process procesoEnCPU = null;
 
     // ... Hilos ...

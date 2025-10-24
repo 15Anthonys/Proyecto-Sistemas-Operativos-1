@@ -21,6 +21,8 @@ public class DialogoVerCola extends javax.swing.JDialog {
     private javax.swing.JPanel panelContenedorProcesos;
     private javax.swing.JScrollPane scrollPaneContenedor;
     private javax.swing.JButton btnCerrar;
+    private javax.swing.JScrollPane jScrollPane1;
+    private javax.swing.JTextArea txt;
 
     /**
      * Constructor
@@ -75,6 +77,8 @@ public class DialogoVerCola extends javax.swing.JDialog {
      * Este método crea la GUI (en lugar del initComponents de NetBeans)
      */
     private void initComponentsManual() {
+        jScrollPane1 = new javax.swing.JScrollPane();
+        txt = new javax.swing.JTextArea();
         scrollPaneContenedor = new javax.swing.JScrollPane();
         panelContenedorProcesos = new javax.swing.JPanel();
         btnCerrar = new javax.swing.JButton();
@@ -86,6 +90,11 @@ public class DialogoVerCola extends javax.swing.JDialog {
         // ¡Esta es la línea clave para el scroll horizontal!
         panelContenedorProcesos.setLayout(new javax.swing.BoxLayout(panelContenedorProcesos, javax.swing.BoxLayout.X_AXIS));
         scrollPaneContenedor.setViewportView(panelContenedorProcesos);
+
+        txt.setColumns(30);
+        txt.setRows(12);
+        txt.setEditable(false);
+        jScrollPane1.setViewportView(txt);
 
         btnCerrar.setText("Cerrar");
         btnCerrar.addActionListener(new java.awt.event.ActionListener() {
