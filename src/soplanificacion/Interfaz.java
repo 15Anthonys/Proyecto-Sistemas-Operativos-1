@@ -5,7 +5,8 @@
 package soplanificacion;
 import EstructurasDeDatos.Cola;
 import EstructurasDeDatos.Nodo;
-import Planificacion.*; 
+import EstructurasDeDatos.ListaSimple; 
+import Planificacion.*;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 
@@ -13,9 +14,17 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.util.ArrayList;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+
+import org.jfree.chart.ChartFactory;
+import org.jfree.chart.ChartPanel;
+import org.jfree.chart.JFreeChart;
+import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.plot.PlotOrientation;
+import org.jfree.chart.plot.XYPlot;
+import org.jfree.data.xy.XYSeries;
+import org.jfree.data.xy.XYSeriesCollection;
+
 
 /**
  *
@@ -63,10 +72,15 @@ public class Interfaz extends javax.swing.JFrame {
     public static volatile Process procesoEnCPU = null;
 
     // ... Hilos ...
-    private Thread hiloPlanificador;
+   private Thread hiloPlanificador;
     private Thread hiloGestorIO;
-    private Planificacion.Planificador planificador;
+    private Thread hiloPMP; // (Añadido)
+    // private Planificacion.Planificador planificador; // (Movido a estático)
     private Planificacion.GestorIO gestorIO;
+    private Planificacion.PlanificadorMedianoPlazo pmp; // (Añadido)
+    
+    public static XYSeries seriesUtilizacion = new XYSeries("Utilización CPU");
+    public static Planificador planificador; // Referencia estática para PMP
     
 
 // También actualiza el tipo que devuelve el getter
@@ -89,7 +103,18 @@ public class Interfaz extends javax.swing.JFrame {
         initComponents();
         configurarPanelesDeColasVisualmente();
         actualizarEstadoBotones();
-        iniciarRelojGlobal();
+        iniciarGrafico();
+        
+        cycleDurationSlider.addChangeListener(e -> {
+            if (planificador != null) {
+                int ms = cycleDurationSlider.getValue();
+                planificador.setCycleMs(ms);
+                ConfigIO.save(ms); // Guarda la configuración
+            }
+        });
+        int cycleMs = ConfigIO.loadCycleMs();
+        cycleDurationSlider.setValue(cycleMs);
+        
         
     }
     
@@ -172,7 +197,8 @@ public class Interfaz extends javax.swing.JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 // --- SE ELIMINÓ LA LÓGICA DEL RELOJ DE AQUÍ ---
-
+                final String textoReloj = "Reloj Global " + Interfaz.globalClock.get();
+                SwingUtilities.invokeLater(() -> TextRelojGlobal.setText(textoReloj));
                 // --- Actualización de Paneles ---
                 actualizarPanelesDeColas(); // Actualiza los 4+1 paneles de colas
                 actualizarPanelCPU();     // Actualiza el panel de CPU
@@ -188,7 +214,44 @@ public class Interfaz extends javax.swing.JFrame {
 
         System.out.println("GUI: Timer de paneles iniciado (refresco cada 250ms).");
     }
-    
+    private void iniciarGrafico() {
+        // 1. Crea el contenedor de datos y añade nuestra serie (definida como estática)
+        XYSeriesCollection dataset = new XYSeriesCollection();
+        dataset.addSeries(Interfaz.seriesUtilizacion);
+
+        // 2. Crea el objeto Chart
+        JFreeChart chart = ChartFactory.createXYLineChart(
+            "Utilización de CPU vs. Tiempo", // Título
+            "Tiempo (Ciclos)",                 // Etiqueta Eje X
+            "Utilización (%)",                 // Etiqueta Eje Y
+            dataset,                           // Los datos
+            PlotOrientation.VERTICAL,
+            true,  // Mostrar leyenda
+            true,  // Usar tooltips
+            false  // No usar URLs
+        );
+
+        // 3. Personaliza el gráfico
+        XYPlot plot = chart.getXYPlot();
+        plot.setBackgroundPaint(Color.WHITE); // Fondo blanco
+        plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
+        plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
+        
+        // Fija el Eje Y de 0 a 100%
+        NumberAxis yAxis = (NumberAxis) plot.getRangeAxis();
+        yAxis.setRange(0.0, 100.0); // Rango fijo de 0% a 100%
+        yAxis.setStandardTickUnits(NumberAxis.createIntegerTickUnits());
+
+        // 4. Crea el Panel de Swing
+        ChartPanel chartPanel = new ChartPanel(chart);
+        chartPanel.setMouseWheelEnabled(true); // Permite zoom con la rueda
+        
+        // 5. ¡Añade el gráfico al 'recuadro' (jPanel4) de tu pestaña "Estadisticas"!
+        // (Asegúrate de que tu JPanel se llama 'jPanel4')
+        jPanel4.setLayout(new java.awt.BorderLayout()); // Le damos un layout
+        jPanel4.add(chartPanel, java.awt.BorderLayout.CENTER); // Lo añadimos al centro
+        jPanel4.validate();
+    }
     private void configurarPanelesDeColasVisualmente() {
     configurarUnPanelConScroll(PanelListos, "panelContenedorListos");
     configurarUnPanelConScroll(PanelBloqueados, "panelContenedorBloqueados");
@@ -247,8 +310,7 @@ public class Interfaz extends javax.swing.JFrame {
         // 1. Limpia el panel interno
         panelInterno.removeAll();
 
-        ArrayList<Process> procesosEnCola = new ArrayList<>(); // Lista temporal para Procesos
-
+        ListaSimple<Process> procesosEnCola = new ListaSimple<>();
         try {
             // 2. Intenta adquirir semáforo (rápido)
             if (sem.tryAcquire(50, TimeUnit.MILLISECONDS)) {
@@ -287,7 +349,9 @@ public class Interfaz extends javax.swing.JFrame {
         } else {
             // --- ¡CAMBIO AQUÍ! --- Crea y añade TARJETAS ---
             panelInterno.add(Box.createHorizontalStrut(5)); // Pequeño margen izquierdo
-            for (Process p : procesosEnCola) {
+            Nodo<Process> nodoProceso = procesosEnCola.getpFirst();
+            while (nodoProceso != null) {
+                Process p = nodoProceso.getData();
                 PanelProcesoVista tarjeta = new PanelProcesoVista(); // Crea tu tarjeta
                 tarjeta.actualizarDatos(p); // Le pasas el proceso
                 panelInterno.add(tarjeta); // Añades la tarjeta
@@ -359,18 +423,14 @@ public class Interfaz extends javax.swing.JFrame {
                 return new Planificacion.HRRNAlgorithm(); // Asumiendo que existe
                 
             case "Feedback":
-                // --- ¡ARREGLO AQUÍ! --- Comenta o elimina este bloque ---
-                 System.out.println("ALGORITMO FEEDBACK NO IMPLEMENTADO AÚN");
-                 return null; // Devuelve null temporalmente
-                 /*
-                 // Cuando tengas FeedbackAlgorithm.java en el paquete Planificacion, descomenta:
+                // --- ¡ARREGLO AQUÍ! --- Se descomentó la línea correcta ---
                  return new Planificacion.FeedbackAlgorithm();
-                 */
-                 // --- FIN DEL ARREGLO ---
+                 
             default:
                 JOptionPane.showMessageDialog(this, "Algoritmo no reconocido: " + nombreAlgoritmo, "Error", JOptionPane.ERROR_MESSAGE);
-                return null; // O lanza una excepción
+                return new Planificacion.FCFSAlgorithm(); // Devuelve FCFS por defecto
         }
+        
     }
     
     /**
@@ -460,6 +520,7 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel13 = new javax.swing.JPanel();
         PanelRendimiento = new javax.swing.JPanel();
         jLabel21 = new javax.swing.JLabel();
+        btnVerMetricas = new javax.swing.JButton();
         jPanel15 = new javax.swing.JPanel();
         jLabel20 = new javax.swing.JLabel();
         jLabel27 = new javax.swing.JLabel();
@@ -524,23 +585,21 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel7Layout.setHorizontalGroup(
             jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel7Layout.createSequentialGroup()
-                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel7Layout.createSequentialGroup()
-                        .addGap(81, 81, 81)
-                        .addComponent(BotonIniciar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                        .addComponent(BotonPausar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                        .addComponent(BotonReiniciar)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 52, Short.MAX_VALUE)
-                        .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 217, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(jPanel7Layout.createSequentialGroup()
-                        .addGap(32, 32, 32)
-                        .addComponent(jLabel12)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, 190, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, Short.MAX_VALUE)))
+                .addGap(81, 81, 81)
+                .addComponent(BotonIniciar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addComponent(BotonPausar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                .addComponent(BotonReiniciar)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 56, Short.MAX_VALUE)
+                .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 217, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addContainerGap())
+            .addGroup(jPanel7Layout.createSequentialGroup()
+                .addGap(32, 32, 32)
+                .addComponent(jLabel12)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, 190, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
             .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                 .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel7Layout.createSequentialGroup()
                     .addContainerGap(201, Short.MAX_VALUE)
@@ -666,32 +725,31 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel3Layout.setHorizontalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel3Layout.createSequentialGroup()
+                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel3Layout.createSequentialGroup()
+                        .addGap(75, 75, 75)
+                        .addComponent(jLabel25))
+                    .addGroup(jPanel3Layout.createSequentialGroup()
+                        .addGap(45, 45, 45)
+                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, 223, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
+                .addGap(48, 48, 48)
+                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addComponent(jLabel26)
+                    .addComponent(PanelBloqueados_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(PanelBloqueados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addContainerGap(69, Short.MAX_VALUE))
+            .addGroup(jPanel3Layout.createSequentialGroup()
                 .addGap(119, 119, 119)
                 .addComponent(jLabel23)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel16)
                 .addGap(132, 132, 132))
             .addGroup(jPanel3Layout.createSequentialGroup()
-                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel3Layout.createSequentialGroup()
-                        .addGap(196, 196, 196)
-                        .addComponent(jLabel22, javax.swing.GroupLayout.PREFERRED_SIZE, 230, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(jPanel3Layout.createSequentialGroup()
-                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addGroup(jPanel3Layout.createSequentialGroup()
-                                .addGap(75, 75, 75)
-                                .addComponent(jLabel25))
-                            .addGroup(jPanel3Layout.createSequentialGroup()
-                                .addGap(45, 45, 45)
-                                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                                    .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, 223, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                    .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
-                        .addGap(48, 48, 48)
-                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(jLabel26)
-                            .addComponent(PanelBloqueados_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(PanelBloqueados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
-                .addContainerGap(69, Short.MAX_VALUE))
+                .addGap(196, 196, 196)
+                .addComponent(jLabel22, javax.swing.GroupLayout.PREFERRED_SIZE, 230, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
         jPanel3Layout.setVerticalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -909,11 +967,11 @@ public class Interfaz extends javax.swing.JFrame {
         PanelRendimiento.setLayout(PanelRendimientoLayout);
         PanelRendimientoLayout.setHorizontalGroup(
             PanelRendimientoLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 362, Short.MAX_VALUE)
+            .addGap(0, 359, Short.MAX_VALUE)
         );
         PanelRendimientoLayout.setVerticalGroup(
             PanelRendimientoLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 259, Short.MAX_VALUE)
+            .addGap(0, 222, Short.MAX_VALUE)
         );
 
         jLabel21.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
@@ -922,6 +980,13 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel21.setText("<html><center>Grafico de Rendimiento</center></html>");
         jLabel21.setHorizontalTextPosition(javax.swing.SwingConstants.CENTER);
 
+        btnVerMetricas.setText("Ver Metricas");
+        btnVerMetricas.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                btnVerMetricasActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout jPanel13Layout = new javax.swing.GroupLayout(jPanel13);
         jPanel13.setLayout(jPanel13Layout);
         jPanel13Layout.setHorizontalGroup(
@@ -929,11 +994,13 @@ public class Interfaz extends javax.swing.JFrame {
             .addGroup(jPanel13Layout.createSequentialGroup()
                 .addGroup(jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(jPanel13Layout.createSequentialGroup()
-                        .addGap(37, 37, 37)
-                        .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(jPanel13Layout.createSequentialGroup()
                         .addGap(72, 72, 72)
-                        .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                        .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, 305, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addGroup(jPanel13Layout.createSequentialGroup()
+                        .addGap(40, 40, 40)
+                        .addGroup(jPanel13Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(btnVerMetricas)
+                            .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
                 .addContainerGap(49, Short.MAX_VALUE))
         );
         jPanel13Layout.setVerticalGroup(
@@ -943,7 +1010,9 @@ public class Interfaz extends javax.swing.JFrame {
                 .addComponent(jLabel21, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addComponent(PanelRendimiento, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addGap(18, 18, 18)
+                .addComponent(btnVerMetricas)
+                .addContainerGap(22, Short.MAX_VALUE))
         );
 
         jPanel1.add(jPanel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 150, 450, 330));
@@ -1258,6 +1327,140 @@ public class Interfaz extends javax.swing.JFrame {
         //getOperatingSystem().getSystemClock().setCycleDuration(newSpeed);
     }//GEN-LAST:event_cycleDurationSliderStateChanged
 
+    private void btnVerMetricasActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnVerMetricasActionPerformed
+        // TODO add your handling code here:
+        long tiempoTotalSimulacion = Interfaz.globalClock.get();
+    
+    // Si la simulación apenas comienza, no hay nada que mostrar.
+    if (tiempoTotalSimulacion == 0) {
+        JOptionPane.showMessageDialog(this, 
+                "La simulación aún no ha avanzado.", 
+                "Métricas de Rendimiento", 
+                JOptionPane.INFORMATION_MESSAGE);
+        return;
+    }
+
+    // --- Variables para los cálculos ---
+    int numProcesosTerminados = 0;
+    long tiempoOcupadoCPU = 0;
+    long sumaTiemposDeRespuesta = 0;
+    
+    // Para Fairness (Equidad), usaremos una lista temporal
+    EstructurasDeDatos.ListaSimple<Long> tiemposCPU = new EstructurasDeDatos.ListaSimple<>();
+
+    // --- 1. Adquirir el semáforo para leer la cola de terminados ---
+    try {
+        // Usamos tryAcquire para no bloquear la UI si el semáforo está ocupado
+        if (Interfaz.semaforoTerminados.tryAcquire(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            try {
+                numProcesosTerminados = Interfaz.colaTerminados.getSize();
+                
+                if (numProcesosTerminados == 0) {
+                    JOptionPane.showMessageDialog(this, 
+                            "Aún no ha terminado ningún proceso.", 
+                            "Métricas de Rendimiento", 
+                            JOptionPane.INFORMATION_MESSAGE);
+                    return; // Salimos del método
+                }
+
+                // --- 2. Iterar la cola de terminados ---
+                Nodo<Process> actual = Interfaz.colaTerminados.getpFirst();
+                while (actual != null) {
+                    Process p = actual.getData();
+
+                    // Suma para Utilización de CPU
+                    tiempoOcupadoCPU += p.executedCycles;
+
+                    // Suma para Tiempo de Respuesta
+                    if (p.firstRunCycle >= 0) { // Asegurarse de que el proceso al menos corrió una vez
+                        sumaTiemposDeRespuesta += (p.firstRunCycle - p.arrivalCycle);
+                    }
+
+                    // Guardar para Fairness
+                    tiemposCPU.addAtTheEnd((long) p.executedCycles);
+
+                    actual = actual.getPnext();
+                }
+                
+            } finally {
+                Interfaz.semaforoTerminados.release(); // ¡Fundamental liberar!
+            }
+        } else {
+            // Si no se pudo adquirir el semáforo, avisa al usuario
+            JOptionPane.showMessageDialog(this, 
+                    "No se pudo calcular: El semáforo de procesos terminados está ocupado.\nIntente de nuevo.", 
+                    "Error de Concurrencia", 
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+    }
+
+    // --- 3. Calcular las Métricas Finales ---
+
+    // a) Throughput
+    // (Usamos segundos "reales" asumiendo 1 ciclo = 1 segundo, 
+    // o simplemente ciclos como unidad de tiempo)
+    double throughput = (double) numProcesosTerminados / (double) tiempoTotalSimulacion;
+
+    // b) Utilización del Procesador
+    double utilizacionCPU = ((double) tiempoOcupadoCPU / (double) tiempoTotalSimulacion) * 100.0;
+
+    // c) Tiempo de Respuesta Promedio
+    double tiempoRespuestaPromedio = (double) sumaTiemposDeRespuesta / (double) numProcesosTerminados;
+
+    // d) Equidad (Fairness) - Calculando Desviación Estándar
+    // (Una desviación baja es MÁS justo, una alta es MENOS justo)
+    double mediaTiemposCPU = (double) tiempoOcupadoCPU / (double) numProcesosTerminados;
+    double sumaDeCuadrados = 0.0;
+    
+    Nodo<Long> nodoTiempo = tiemposCPU.getpFirst();
+    while (nodoTiempo != null) {
+        sumaDeCuadrados += Math.pow(nodoTiempo.getData() - mediaTiemposCPU, 2);
+        nodoTiempo = nodoTiempo.getPnext();
+    }
+    double varianza = sumaDeCuadrados / (double) numProcesosTerminados;
+    double desviacionEstandar = Math.sqrt(varianza);
+
+
+    // --- 4. Mostrar Resultados ---
+    
+    // Formatear el texto para mostrarlo bonito
+    String mensaje = String.format(
+        "Métricas de Rendimiento (Basado en %d procesos terminados):\n\n" +
+        "Tiempo Total de Simulación: %d ciclos\n\n" +
+        "1. Throughput:\n" +
+        "   %.4f procesos por ciclo\n\n" +
+        "2. Utilización del Procesador:\n" +
+        "   %.2f %% (CPU ocupada %d de %d ciclos)\n\n" +
+        "3. Tiempo de Respuesta Promedio:\n" +
+        "   %.2f ciclos (tiempo promedio desde 'Llegada' hasta '1ra Ejecución')\n\n" +
+        "4. Equidad (Fairness) - Desviación Estándar:\n" +
+        "   %.2f ciclos (Un valor bajo significa que los procesos recibieron\n" +
+        "   tiempos de CPU similares, lo cual es más justo).",
+        
+        numProcesosTerminados,
+        tiempoTotalSimulacion,
+        throughput,
+        utilizacionCPU, tiempoOcupadoCPU, tiempoTotalSimulacion,
+        tiempoRespuestaPromedio,
+        desviacionEstandar
+    );
+
+    // Usar un JTextArea para que el texto sea seleccionable y multilínea
+    JTextArea textArea = new JTextArea(mensaje);
+    textArea.setEditable(false);
+    textArea.setOpaque(false);
+    textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+    
+    JOptionPane.showMessageDialog(this, 
+            new JScrollPane(textArea), 
+            "Métricas de Rendimiento", 
+            JOptionPane.INFORMATION_MESSAGE);
+    }//GEN-LAST:event_btnVerMetricasActionPerformed
+
     /**
      * @param args the command line arguments
      */
@@ -1309,6 +1512,7 @@ public class Interfaz extends javax.swing.JFrame {
     private javax.swing.JPanel PanelTerminados;
     private javax.swing.JPanel PanelTerminadosEventos;
     private javax.swing.JLabel TextRelojGlobal;
+    private javax.swing.JButton btnVerMetricas;
     private javax.swing.JButton btnVerNuevos;
     private javax.swing.JSlider cycleDurationSlider;
     private javax.swing.JComboBox<String> jComboAlgoritmos;
