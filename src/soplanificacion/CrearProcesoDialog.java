@@ -7,6 +7,8 @@ package soplanificacion;
 import ProccesFabrication.Process;
 import EstructurasDeDatos.Cola;
 import javax.swing.JOptionPane;
+import soplanificacion.CargaIO; 
+import soplanificacion.CargaProcesoConfig; 
 
 /**
  *
@@ -26,6 +28,18 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
         
         this.interfazPrincipal = (Interfaz) parent;
         txtCiclosExcepcion.setEnabled(radioIoBound.isSelected());
+        CargaProcesoConfig configCarga = CargaIO.load();
+
+    // 2. Rellena los campos de la GUI con esos valores
+    txtInstrucciones.setText(String.valueOf(configCarga.getInstrucciones()));
+    txtCiclosExcepcion.setText(String.valueOf(configCarga.getCiclosExcepcion()));
+    txtCiclosResolver.setText(String.valueOf(configCarga.getCiclosResolver()));
+
+    if (configCarga.isEsIoBound()) {
+        radioIoBound.setSelected(true);
+    } else {
+        radioCpuBound.setSelected(true);
+    }
 }
 
     /**

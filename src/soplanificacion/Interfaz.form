@@ -1116,6 +1116,9 @@
                     </Property>
                     <Property name="text" type="java.lang.String" value="Escribir"/>
                   </Properties>
+                  <Events>
+                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="BotonEscribirActionPerformed"/>
+                  </Events>
                 </Component>
                 <Container class="javax.swing.JPanel" name="PanelTerminados">
                   <Properties>

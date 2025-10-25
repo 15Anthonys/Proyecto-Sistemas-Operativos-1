@@ -227,19 +227,35 @@ public class Interfaz extends javax.swing.JFrame {
 }
     
     public static void logEvento(String mensaje) {
-    // Verifica que la consola ya esté inicializada
-    if (consolaDeEventos != null) {
-
-        // JTextArea.append() es thread-safe, no necesitamos SwingUtilities.invokeLater
-        // Añadimos el tiempo global para dar contexto
+    // Añadimos el tiempo global para dar contexto
         long tiempo = Interfaz.globalClock.get();
-        consolaDeEventos.append("[" + tiempo + "] " + mensaje + "\n");
+        final String texto = "[" + tiempo + "] " + mensaje + "\n";
 
-        // --- Auto-Scroll ---
-        // Mueve el "cursor" (caret) al final del texto para que el scroll
-        // baje automáticamente y siempre veas la última línea.
-        consolaDeEventos.setCaretPosition(consolaDeEventos.getDocument().getLength());
-    }
+        // SwingUtilities.invokeLater pone esta tarea en la cola del 
+        // hilo de la GUI, evitando el error de concurrencia.
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                // Verifica que la consola exista y sea un JTextArea
+                if (consolaDeEventos != null && consolaDeEventos instanceof JTextArea) {
+                    try {
+                        JTextArea logTextArea = (JTextArea) consolaDeEventos;
+                        logTextArea.append(texto);
+                         
+                        // --- Auto-Scroll ---
+                        logTextArea.setCaretPosition(logTextArea.getDocument().getLength());
+                        
+                    } catch (Exception e) {
+                        // Error inesperado al actualizar la GUI
+                        System.err.println("Error en logEvento (invokeLater): " + e.getMessage());
+                    }
+                } else {
+                    // Si consolaDeEventos no está listo o no es un JTextArea, 
+                    // al menos imprímelo en la consola estándar.
+                    System.out.print("LOG (Consola): " + texto); // print para evitar doble newline
+                }
+            }
+        });
 }
     
     private void limpiarCola(Cola<?> cola, SimpleSemaphore sem) {
@@ -1225,6 +1241,11 @@ public class Interfaz extends javax.swing.JFrame {
 
         BotonEscribir.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 18)); // NOI18N
         BotonEscribir.setText("Escribir");
+        BotonEscribir.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                BotonEscribirActionPerformed(evt);
+            }
+        });
 
         PanelTerminados.setPreferredSize(new java.awt.Dimension(223, 174));
         PanelTerminados.setLayout(new java.awt.BorderLayout());
@@ -1661,6 +1682,89 @@ public class Interfaz extends javax.swing.JFrame {
     // Actualiza los botones "Ver Nuevos" e "Iniciar"
     actualizarEstadoBotones();
     }//GEN-LAST:event_Boton20ActionPerformed
+
+    private void BotonEscribirActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonEscribirActionPerformed
+        // TODO add your handling code here:
+        try {
+            // 1. Carga la configuración actual (para mostrarla como defecto)
+            CargaProcesoConfig configActual = CargaIO.load();
+
+            // 2. Pedir los valores al usuario uno por uno
+            String strInstrucciones = (String) JOptionPane.showInputDialog(
+                    this,
+                    "Número de instrucciones por defecto:",
+                    "Guardar Carga",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    null,
+                    configActual.getInstrucciones()); // Valor por defecto
+            if (strInstrucciones == null) return; // Usuario canceló
+
+            // ---
+            String[] opcionesTipo = {"CPU Bound", "I/O Bound"};
+            int tipoSeleccionado = JOptionPane.showOptionDialog(
+                    this,
+                    "Tipo de proceso por defecto:",
+                    "Guardar Carga",
+                    JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    opcionesTipo,
+                    configActual.isEsIoBound() ? opcionesTipo[1] : opcionesTipo[0]);
+            if (tipoSeleccionado == -1) return; // Usuario canceló
+            boolean esIoBound = (tipoSeleccionado == 1);
+
+            // ---
+            String strCiclosExcepcion = (String) JOptionPane.showInputDialog(
+                    this,
+                    "Ciclos para generar E/S (si es I/O Bound):",
+                    "Guardar Carga",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    null,
+                    configActual.getCiclosExcepcion());
+            if (strCiclosExcepcion == null) return;
+
+            // ---
+            String strCiclosResolver = (String) JOptionPane.showInputDialog(
+                    this,
+                    "Ciclos para resolver E/S (si es I/O Bound):",
+                    "Guardar Carga",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    null,
+                    configActual.getCiclosResolver());
+            if (strCiclosResolver == null) return;
+            
+
+            // 3. Crear el nuevo objeto de configuración
+            CargaProcesoConfig configNueva = new CargaProcesoConfig();
+            configNueva.setInstrucciones(Integer.parseInt(strInstrucciones));
+            configNueva.setEsIoBound(esIoBound);
+            configNueva.setCiclosExcepcion(Integer.parseInt(strCiclosExcepcion));
+            configNueva.setCiclosResolver(Integer.parseInt(strCiclosResolver));
+
+            // 4. Guardar en el archivo
+            CargaIO.save(configNueva);
+            
+            JOptionPane.showMessageDialog(this, 
+                    "Configuración de carga guardada exitosamente en 'carga.json'.",
+                    "Guardado",
+                    JOptionPane.INFORMATION_MESSAGE);
+
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, 
+                    "Error: Ingrese solo números válidos.",
+                    "Error de Formato",
+                    JOptionPane.ERROR_MESSAGE);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, 
+                    "Error al guardar: " + e.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    
+    }//GEN-LAST:event_BotonEscribirActionPerformed
 
     /**
      * @param args the command line arguments
