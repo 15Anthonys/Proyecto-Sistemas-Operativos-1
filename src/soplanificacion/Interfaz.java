@@ -3,19 +3,27 @@
  * Click nbfs://nbhost/SystemFileSystem/Templates/GUIForms/JFrame.java to edit this template
  */
 package soplanificacion;
+
 import EstructurasDeDatos.Cola;
 import EstructurasDeDatos.Nodo;
+// --- ¡CAMBIO IMPORTANTE! ---
+// Se importa ListaSimple para reemplazar a ArrayList
 import EstructurasDeDatos.ListaSimple; 
 import Planificacion.*;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
 
+import java.util.Random;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+// import java.util.ArrayList; // <-- ¡ELIMINADO!
+// import java.util.concurrent.Semaphore; // (No se usa, se usa SimpleSemaphore)
 import java.util.concurrent.TimeUnit;
 
+
+// --- NUEVO: IMPORTS PARA JFREECHART ---
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
@@ -24,6 +32,7 @@ import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
+// --- FIN DE IMPORTS ---
 
 
 /**
@@ -36,15 +45,19 @@ public class Interfaz extends javax.swing.JFrame {
     
     
     
+    private volatile boolean simulacionCorriendo = false;
+    //private volatile boolean simulacionCompletada = false;
+    
     
     
     private javax.swing.JScrollPane scrollPaneListos;
     private javax.swing.JPanel panelContenedorListos;
+
+    private Timer clockTimer; // (Esta variable ya no se usará, pero la dejamos declarada)
     
-    private Timer clockTimer;
-    
-    
-// --- EDD Original (Solo para "Nuevos") ---
+    private static javax.swing.JTextArea consolaDeEventos;
+
+    // --- EDD Original (Solo para "Nuevos") ---
     public static Cola<Process> colaNuevos = new Cola<>();
 
     // --- EDD COMPARTIDAS ---
@@ -71,26 +84,27 @@ public class Interfaz extends javax.swing.JFrame {
     // Proceso en CPU actual
     public static volatile Process procesoEnCPU = null;
 
+    // --- NUEVO: Variables para el Gráfico y Hilos ---
+    public static XYSeries seriesUtilizacion = new XYSeries("Utilización CPU");
+    public static Planificador planificador; // Referencia estática para PMP
+    // --- FIN DE NUEVO ---
+    
     // ... Hilos ...
-   private Thread hiloPlanificador;
+    private Thread hiloPlanificador;
     private Thread hiloGestorIO;
     private Thread hiloPMP; // (Añadido)
     // private Planificacion.Planificador planificador; // (Movido a estático)
     private Planificacion.GestorIO gestorIO;
     private Planificacion.PlanificadorMedianoPlazo pmp; // (Añadido)
-    
-    public static XYSeries seriesUtilizacion = new XYSeries("Utilización CPU");
-    public static Planificador planificador; // Referencia estática para PMP
-    
 
-// También actualiza el tipo que devuelve el getter
+
+    // También actualiza el tipo que devuelve el getter
     public EstructurasDeDatos.Cola<ProccesFabrication.Process> getColaNuevos() {
         return colaNuevos;
     }
-    
+
     private Timer guiTimer;
-    
-    
+
     private JPanel panelContenedorBloqueados;
     private JPanel panelContenedorListosSusp;
     private JPanel panelContenedorBloqueadosSusp;
@@ -102,9 +116,16 @@ public class Interfaz extends javax.swing.JFrame {
     public Interfaz() {
         initComponents();
         configurarPanelesDeColasVisualmente();
-        actualizarEstadoBotones();
-        iniciarGrafico();
         
+        
+        // --- MODIFICADO: Inicia el gráfico y conecta el slider ---
+        iniciarGrafico(); // Crea el gráfico en jPanel4
+        configurarPanelDeEventos();
+        
+        int cycleMsGuardados = ConfigIO.loadCycleMs();
+        cycleDurationSlider.setValue(cycleMsGuardados);
+        
+        // Conecta el listener para el slider de velocidad
         cycleDurationSlider.addChangeListener(e -> {
             if (planificador != null) {
                 int ms = cycleDurationSlider.getValue();
@@ -112,55 +133,158 @@ public class Interfaz extends javax.swing.JFrame {
                 ConfigIO.save(ms); // Guarda la configuración
             }
         });
+        
+        // Carga la velocidad guardada
         int cycleMs = ConfigIO.loadCycleMs();
         cycleDurationSlider.setValue(cycleMs);
         
-        
-    }
-    
-    
-    /**
-     * Inicia un Timer independiente que actualiza el reloj global (globalClock)
-     * y el JLabel TextRelojGlobal cada segundo.
-     * LLAMADO DESDE EL CONSTRUCTOR.
-     */
-    private void iniciarRelojGlobal() {
-        // Detiene cualquier timer de reloj anterior si existe
-        if (clockTimer != null && clockTimer.isRunning()) {
-            clockTimer.stop();
-        }
-
-        // Resetea el contador global y el texto del label al inicio
-        Interfaz.globalClock.set(0);
-        SwingUtilities.invokeLater(() -> TextRelojGlobal.setText("Reloj Global 0"));
-
-        // Crea el Timer que se dispara cada 1000ms (1 segundo)
-        clockTimer = new Timer(1000, new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                // Incrementa el contador atómico global
-                int nuevoCiclo = (int) Interfaz.globalClock.incrementAndGet();
-                // Actualiza el texto del JLabel en el hilo de Swing
-                final String textoReloj = "Reloj Global " + nuevoCiclo;
-                SwingUtilities.invokeLater(() -> TextRelojGlobal.setText(textoReloj));
+        cycleDurationSlider.addChangeListener(new javax.swing.event.ChangeListener() {
+        public void stateChanged(javax.swing.event.ChangeEvent e) {
+            
+            // Solo actualiza cuando el usuario SUELTA el slider
+            if (!cycleDurationSlider.getValueIsAdjusting()) {
+                int ms = cycleDurationSlider.getValue();
+                
+                // A. Actualiza el planificador (si está corriendo)
+                //    Esto cambia la velocidad en tiempo real
+                if (MotorSimulacion.planificador != null) {
+                    MotorSimulacion.planificador.setCycleMs(ms);
+                }
+                
+                // B. Guarda el nuevo valor en el archivo "config.json"
+                ConfigIO.save(ms);
+                
+                // C. Loguea el evento
+                Interfaz.logEvento("GUI: Velocidad de ciclo cambiada a " + ms + "ms.");
             }
-        });
-
-        clockTimer.setInitialDelay(1000); // Espera 1 segundo antes del primer incremento
-        clockTimer.setRepeats(true);    // Asegura que se repita
-        clockTimer.start();             // ¡Inicia el timer del reloj!
-
-        System.out.println("GUI: Reloj Global iniciado.");
+        }
+    });
+        actualizarEstadoBotones();
+        
+        // --- ELIMINADO ---
+        // iniciarRelojGlobal(); // ¡ELIMINADO! Esto causaba conflicto con el hilo Planificador.
     }
+    
+   
+    private void limpiarSistemaParaNuevaSimulacion() {
+    System.out.println("GUI: Detectando estado anterior. Limpiando sistema...");
+
+    // 1. Detiene cualquier timer de GUI que haya quedado activo
+    if (guiTimer != null && guiTimer.isRunning()) {
+        guiTimer.stop();
+    }
+    
+    // 2. ¡LA PARTE CLAVE! Limpia las colas
+    limpiarCola(Interfaz.colaListos, Interfaz.semaforoListos);
+    limpiarCola(Interfaz.colaBloqueados, Interfaz.semaforoBloqueados);
+    limpiarCola(Interfaz.colaTerminados, Interfaz.semaforoTerminados); // <-- ¡Arregla el colaspo!
+    limpiarCola(Interfaz.colaListosSuspendidos, Interfaz.semaforoListosSuspendidos);
+    limpiarCola(Interfaz.colaBloqueadosSuspendidos, Interfaz.semaforoBloqueadosSuspendidos);
+    
+    // 3. Limpia la cola de hilos de procesos del Motor
+    limpiarCola(MotorSimulacion.hilosProcesos, MotorSimulacion.semaforoHilosProcesos);
+
+    // 4. Resetea contadores globales y CPU
+    Interfaz.globalClock.set(0);
+    Interfaz.contadorProcesosEnMemoria.set(0);
+    Interfaz.procesoEnCPU = null;
+    
+    // 5. Limpia el gráfico
+    Interfaz.seriesUtilizacion.clear();
+
+    // 6. Actualiza la GUI para reflejar el estado limpio
+    //    (Esto limpia visualmente la simulación anterior)
+    actualizarPanelesDeColas(); 
+    actualizarPanelCPU();       
+    PanelRendimiento.repaint();
+    TextRelojGlobal.setText("Reloj Global: 0");
+    
+    System.out.println("GUI: Sistema limpio. Listo para iniciar.");
+}
+    
+    private void configurarPanelDeEventos() {
+    // 1. Crear el área de texto
+    consolaDeEventos = new javax.swing.JTextArea();
+    consolaDeEventos.setEditable(false); // El usuario no puede escribir
+    consolaDeEventos.setLineWrap(true);      // Las líneas largas saltan
+    consolaDeEventos.setWrapStyleWord(true); // Salta por palabras
+
+    // (Opcional) Le damos una fuente monoespaciada, ideal para logs
+    consolaDeEventos.setFont(new java.awt.Font("Monospaced", 0, 12)); 
+
+    // 2. Crear el JScrollPane y poner el área de texto DENTRO de él
+    javax.swing.JScrollPane scrollLog = new javax.swing.JScrollPane(consolaDeEventos);
+
+    // Configura el scroll vertical (el que pediste)
+    scrollLog.setVerticalScrollBarPolicy(javax.swing.JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+    scrollLog.setHorizontalScrollBarPolicy(javax.swing.JScrollPane.HORIZONTAL_SCROLLBAR_NEVER); // Sin scroll horizontal
+
+    // 3. Añadir el JScrollPane (que contiene el texto) a tu panel gris
+    // (Asumo que tu panel gris se llama 'PanelTerminadosEventos')
+    PanelTerminadosEventos.setLayout(new java.awt.BorderLayout());
+    PanelTerminadosEventos.add(scrollLog, java.awt.BorderLayout.CENTER);
+    PanelTerminadosEventos.validate();
+}
+    
+    public static void logEvento(String mensaje) {
+    // Verifica que la consola ya esté inicializada
+    if (consolaDeEventos != null) {
+
+        // JTextArea.append() es thread-safe, no necesitamos SwingUtilities.invokeLater
+        // Añadimos el tiempo global para dar contexto
+        long tiempo = Interfaz.globalClock.get();
+        consolaDeEventos.append("[" + tiempo + "] " + mensaje + "\n");
+
+        // --- Auto-Scroll ---
+        // Mueve el "cursor" (caret) al final del texto para que el scroll
+        // baje automáticamente y siempre veas la última línea.
+        consolaDeEventos.setCaretPosition(consolaDeEventos.getDocument().getLength());
+    }
+}
+    
+    private void limpiarCola(Cola<?> cola, SimpleSemaphore sem) {
+    try {
+        if (sem.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+            try {
+                while (!cola.isEmpty()) {
+                    cola.pop();
+                }
+            } finally {
+                sem.release();
+            }
+        }
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        System.err.println("Error al limpiar cola: " + e.getMessage());
+    }
+}
+    
     
     
     private void actualizarEstadoBotones() {
-    // Comprueba si hay al menos un proceso en la cola de Nuevos
-        boolean hayProcesosNuevos = !colaNuevos.isEmpty();
+    
+    boolean hayProcesosNuevos;
+    try {
+        Interfaz.semaforoNuevos.acquire();
+        try {
+            hayProcesosNuevos = !Interfaz.colaNuevos.isEmpty();
+        } finally { Interfaz.semaforoNuevos.release(); }
+    } catch (InterruptedException e) { hayProcesosNuevos = false; }
+    
+    // --- LÓGICA DE HABILITACIÓN ---
+    
+    // Botones de Creación y Configuración: Habilitados si NO corre
+    BotonCrearProceso.setEnabled(!simulacionCorriendo);
+    Boton20.setEnabled(!simulacionCorriendo);
+    jComboAlgoritmos.setEnabled(!simulacionCorriendo);
 
-        // Habilita o deshabilita los botones según el resultado
-        btnVerNuevos.setEnabled(hayProcesosNuevos);
-        BotonIniciar.setEnabled(hayProcesosNuevos);
+    // Botón Iniciar: Habilitado si NO corre Y hay procesos en Nuevos
+    BotonIniciar.setEnabled(!simulacionCorriendo && hayProcesosNuevos);
+
+    // Botón Cambiar Algoritmo: Habilitado SI la simulación corre
+    BotonCambiarAlgoritmo.setEnabled(simulacionCorriendo);
+    
+    cycleDurationSlider.setEnabled(true);
 }
     
     private void actualizarPanelesDeColas() {
@@ -181,39 +305,37 @@ public class Interfaz extends javax.swing.JFrame {
      * periódicamente (cada 250ms).
      * LLAMADO POR BotonIniciarActionPerformed.
      */
+    
+    
     private void iniciarTimerGUI() {
-        // Detiene el timer anterior si existe
         if (guiTimer != null && guiTimer.isRunning()) {
             guiTimer.stop();
             System.out.println("GUI: Timer de paneles anterior detenido.");
         }
 
-        // --- YA NO SE RESETEA EL RELOJ GLOBAL AQUÍ ---
-
-        // Crea el Timer que se dispara cada 250ms
         guiTimer = new Timer(250, new ActionListener() {
-            // Ya no necesita la variable 'lastClockUpdateTime'
-
             @Override
             public void actionPerformed(ActionEvent e) {
-                // --- SE ELIMINÓ LA LÓGICA DEL RELOJ DE AQUÍ ---
+                
+                // --- MODIFICADO: Actualiza la etiqueta del reloj (solo lectura) ---
                 final String textoReloj = "Reloj Global " + Interfaz.globalClock.get();
                 SwingUtilities.invokeLater(() -> TextRelojGlobal.setText(textoReloj));
+                // --- FIN DE MODIFICACIÓN ---
+
                 // --- Actualización de Paneles ---
-                actualizarPanelesDeColas(); // Actualiza los 4+1 paneles de colas
-                actualizarPanelCPU();     // Actualiza el panel de CPU
-                // actualizarPanelTerminadosYEventos(); // (Para después)
-                // --- Fin Actualización Paneles ---
+                actualizarPanelesDeColas(); // Actualiza los 5 paneles de colas
+                actualizarPanelCPU();       // Actualiza el panel de CPU
+                PanelRendimiento.repaint();
             }
         });
 
-        // Configuración adicional del Timer
-        guiTimer.setInitialDelay(100); // Pequeña espera antes del primer disparo
-        guiTimer.setRepeats(true);    // Asegura que se repita
-        guiTimer.start();             // ¡Inicia el Timer de paneles!
+        guiTimer.setInitialDelay(100); 
+        guiTimer.setRepeats(true);   
+        guiTimer.start();            
 
         System.out.println("GUI: Timer de paneles iniciado (refresco cada 250ms).");
     }
+    
     private void iniciarGrafico() {
         // 1. Crea el contenedor de datos y añade nuestra serie (definida como estática)
         XYSeriesCollection dataset = new XYSeriesCollection();
@@ -248,10 +370,30 @@ public class Interfaz extends javax.swing.JFrame {
         
         // 5. ¡Añade el gráfico al 'recuadro' (jPanel4) de tu pestaña "Estadisticas"!
         // (Asegúrate de que tu JPanel se llama 'jPanel4')
-        jPanel4.setLayout(new java.awt.BorderLayout()); // Le damos un layout
-        jPanel4.add(chartPanel, java.awt.BorderLayout.CENTER); // Lo añadimos al centro
-        jPanel4.validate();
+        
+        
+        chartPanel.setPreferredSize(new java.awt.Dimension(300, 200));
+
+        // 6. Crea el JScrollPane y pon el gráfico DENTRO de él.
+        JScrollPane scrollParaGrafico = new JScrollPane(chartPanel);
+        scrollParaGrafico.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        scrollParaGrafico.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        
+        Dimension sizeOriginal = PanelRendimiento.getPreferredSize();
+
+        PanelRendimiento.setLayout(new java.awt.BorderLayout()); // Le damos un layout
+        PanelRendimiento.add(chartPanel, java.awt.BorderLayout.CENTER); // Lo añadimos al centro
+        
+        if (sizeOriginal != null && sizeOriginal.width > 0 && sizeOriginal.height > 0) {
+            PanelRendimiento.setPreferredSize(sizeOriginal);
+            PanelRendimiento.setMaximumSize(sizeOriginal);
+            PanelRendimiento.setMinimumSize(sizeOriginal);
+        }
+        
+        PanelRendimiento.validate();
     }
+    
+    
     private void configurarPanelesDeColasVisualmente() {
     configurarUnPanelConScroll(PanelListos, "panelContenedorListos");
     configurarUnPanelConScroll(PanelBloqueados, "panelContenedorBloqueados");
@@ -262,19 +404,14 @@ public class Interfaz extends javax.swing.JFrame {
     
     
     private void configurarUnPanelConScroll(JPanel panelExternoExistente, String nombreVariablePanelInterno) {
-        // 1. Asegura BorderLayout en el panel gris/azul que ya tienes
         panelExternoExistente.setLayout(new BorderLayout());
         panelExternoExistente.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
 
-        // 2. Crea el panel INTERNO (donde irán las TARJETAS)
         JPanel panelInternoNuevo = new JPanel();
-        // --- ¡CAMBIO AQUÍ! --- Usa BoxLayout HORIZONTAL ---
-        panelInternoNuevo.setLayout(new BoxLayout(panelInternoNuevo, BoxLayout.X_AXIS));
-        // --- FIN DEL CAMBIO ---
-        panelInternoNuevo.setBackground(Color.WHITE); // Fondo blanco
+        panelInternoNuevo.setLayout(new BoxLayout(panelInternoNuevo, BoxLayout.X_AXIS)); // Horizontal
+        panelInternoNuevo.setBackground(Color.WHITE); 
         panelInternoNuevo.setOpaque(true);
 
-        // 3. Guarda la referencia al panel interno nuevo
         switch (nombreVariablePanelInterno) {
             case "panelContenedorListos":         panelContenedorListos = panelInternoNuevo; break;
             case "panelContenedorBloqueados":     panelContenedorBloqueados = panelInternoNuevo; break;
@@ -283,18 +420,13 @@ public class Interfaz extends javax.swing.JFrame {
             case "panelContenedorTerminados":     panelContenedorTerminados = panelInternoNuevo; break;
         }
 
-        // 4. Crea el JScrollPane y mete el panel INTERNO dentro
         JScrollPane scrollPane = new JScrollPane(panelInternoNuevo);
-        // --- ¡CAMBIO AQUÍ! --- Ajusta las políticas de scroll ---
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER); // NUNCA vertical
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED); // Horizontal si es necesario
-        // --- FIN DEL CAMBIO ---
         scrollPane.setBorder(null);
 
-        // 5. Añade el JScrollPane al CENTRO del panel gris/azul existente
         panelExternoExistente.add(scrollPane, BorderLayout.CENTER);
 
-        // 6. Refresca el panel existente
         panelExternoExistente.revalidate();
         panelExternoExistente.repaint();
     }
@@ -307,120 +439,108 @@ public class Interfaz extends javax.swing.JFrame {
     private void actualizarUnPanel(JPanel panelInterno, Cola<Process> cola, SimpleSemaphore sem) {
         if (panelInterno == null) return;
 
-        // 1. Limpia el panel interno
         panelInterno.removeAll();
+        
+        // --- ¡CAMBIO IMPORTANTE! ---
+        // Se reemplaza ArrayList por ListaSimple
+        ListaSimple<Process> procesosEnCola = new ListaSimple<>(); 
+        // --- FIN DEL CAMBIO ---
 
-        ListaSimple<Process> procesosEnCola = new ListaSimple<>();
         try {
-            // 2. Intenta adquirir semáforo (rápido)
             if (sem.tryAcquire(50, TimeUnit.MILLISECONDS)) {
                 try {
-                    // --- SECCIÓN CRÍTICA ---
-                    // Copia los OBJETOS Process a la lista temporal
                     Nodo<Process> actual = cola.getpFirst();
                     while (actual != null) {
-                        procesosEnCola.add(actual.getData()); // Copia el objeto Process
+                        // --- ¡CAMBIO IMPORTANTE! ---
+                        procesosEnCola.addAtTheEnd(actual.getData()); // Se usa .addAtTheEnd()
+                        // --- FIN DEL CAMBIO ---
                         actual = actual.getPnext();
                     }
                 } finally {
-                    // 3. Libera el semáforo rápido
                     sem.release();
                 }
             } else {
-                // Semáforo ocupado, no hacemos nada más que limpiar y refrescar
-                panelInterno.add(new JLabel(" ...Cargando... ")); // Muestra mensaje temporal
+                panelInterno.add(new JLabel(" ...Cargando... "));
                 panelInterno.revalidate();
                 panelInterno.repaint();
-                return; // Sal del método hasta el siguiente tick del timer
+                return; 
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             panelInterno.add(new JLabel(" Error Hilo "));
             panelInterno.revalidate();
             panelInterno.repaint();
-            return; // Sal del método
+            return;
         }
 
-        // 4. Fuera de la sección crítica, actualiza la GUI con los datos copiados
-        if (procesosEnCola.isEmpty()) {
-            panelInterno.add(Box.createHorizontalGlue()); // Empuja el texto al centro horizontal
+        // --- ¡CAMBIO IMPORTANTE! ---
+        // Se usa .isEmpty() (que ya tenías)
+        if (procesosEnCola.isEmpty()) { 
+            panelInterno.add(Box.createHorizontalGlue()); 
             panelInterno.add(new JLabel(" Vacío "));
             panelInterno.add(Box.createHorizontalGlue());
         } else {
-            // --- ¡CAMBIO AQUÍ! --- Crea y añade TARJETAS ---
-            panelInterno.add(Box.createHorizontalStrut(5)); // Pequeño margen izquierdo
+            panelInterno.add(Box.createHorizontalStrut(5)); 
+            
+            // Se reemplaza el for-each por un bucle while con Nodos
             Nodo<Process> nodoProceso = procesosEnCola.getpFirst();
             while (nodoProceso != null) {
                 Process p = nodoProceso.getData();
-                PanelProcesoVista tarjeta = new PanelProcesoVista(); // Crea tu tarjeta
-                tarjeta.actualizarDatos(p); // Le pasas el proceso
-                panelInterno.add(tarjeta); // Añades la tarjeta
-                panelInterno.add(Box.createHorizontalStrut(5)); // Espacio entre tarjetas
+                
+                PanelProcesoVista tarjeta = new PanelProcesoVista(); 
+                tarjeta.actualizarDatos(p); 
+                panelInterno.add(tarjeta); 
+                panelInterno.add(Box.createHorizontalStrut(5));
+                
+                nodoProceso = nodoProceso.getPnext(); // Avanza al siguiente nodo
             }
             // --- FIN DEL CAMBIO ---
         }
 
-        // 5. Refresca el panel interno para mostrar las tarjetas
         panelInterno.revalidate();
         panelInterno.repaint();
     }
     
     private void actualizarPanelListos() {
-    
-        // 1. Apunta al panel que está dentro del JScrollPane
+        // (Este método parece ser una versión antigua de actualizarUnPanel)
+        // (Se recomienda usar actualizarUnPanel en su lugar)
         panelContenedorListos.removeAll();
-
-        // 2. Lee la cola de Listos
         Nodo<ProccesFabrication.Process> actual = colaListos.getpFirst();
-
         if (actual == null) {
-            // Si está vacía, muestra un mensaje
             panelContenedorListos.add(new JLabel(" (Cola de Listos Vacía) "));
         } else {
-            // 3. Recorre la cola y crea las tarjetas
             while (actual != null) {
                 ProccesFabrication.Process p = actual.getData();
-
-                // Crea una nueva instancia de tu "tarjeta"
                 PanelProcesoVista nuevaTarjeta = new PanelProcesoVista();
-
-                // Le pasa el Proceso para que muestre sus datos
                 nuevaTarjeta.actualizarDatos(p);
-
-                // Añade la tarjeta al panel horizontal
                 panelContenedorListos.add(nuevaTarjeta);
-
-                // Añade un pequeño espacio entre tarjetas
                 panelContenedorListos.add(Box.createHorizontalStrut(5));
-
                 actual = actual.getPnext();
             }
         }
-
-        // 4. ¡Muy importante! Refresca el panel para que muestre los cambios
         panelContenedorListos.revalidate();
         panelContenedorListos.repaint();
-}
+    }
+    
     
     
     /**
      * Selecciona y devuelve la instancia del algoritmo de planificación
      * basado en la selección del JComboBox.
      */
-    private Planificacion.SchedulerAlgorithm seleccionarAlgoritmo(String nombreAlgoritmo) {
+     private Planificacion.SchedulerAlgorithm seleccionarAlgoritmo(String nombreAlgoritmo) {
         switch (nombreAlgoritmo) {
             case "First-Come, First-Served":
-                return new Planificacion.FCFSAlgorithm(); // Asumiendo que existe
+                return new Planificacion.FCFSAlgorithm();
             case "Round Robin":
-                // Necesitas un quantum. Podrías tener un JTextField para configurarlo,
-                // o un valor por defecto. Usaremos 3 por ahora.
+                // TODO: Deberías leer esto de un JTextField, pero 3 está bien por ahora
                 return new Planificacion.RoundRobinAlgorithm(3);
             case "Shortest Process Next":
-                return new Planificacion.SPNAlgorithm(); // Asumiendo que existe
+                return new Planificacion.SPNAlgorithm();
             case "Shortest Remaining Time":
-                return new Planificacion.SRTAlgorithm(); // Asumiendo que existe
+                return new Planificacion.SRTAlgorithm();
             case "Highest Response-Ratio Next":
-                return new Planificacion.HRRNAlgorithm(); // Asumiendo que existe
+                return new Planificacion.HRRNAlgorithm();
                 
             case "Feedback":
                 // --- ¡ARREGLO AQUÍ! --- Se descomentó la línea correcta ---
@@ -430,7 +550,6 @@ public class Interfaz extends javax.swing.JFrame {
                 JOptionPane.showMessageDialog(this, "Algoritmo no reconocido: " + nombreAlgoritmo, "Error", JOptionPane.ERROR_MESSAGE);
                 return new Planificacion.FCFSAlgorithm(); // Devuelve FCFS por defecto
         }
-        
     }
     
     /**
@@ -441,28 +560,21 @@ public class Interfaz extends javax.swing.JFrame {
     private void actualizarPanelCPU() {
         Process p = Interfaz.procesoEnCPU; // Lee la referencia al proceso actual
 
-        // Actualiza los JLabels. Si p es null, muestra "N/A" o "System".
         if (p != null) {
-            // Hay un proceso de usuario en ejecución
             lblNombreProcesoCPU.setText(p.getName());
             lblIdProcesoCPU.setText(String.valueOf(p.getId()));
             lblPcProcesoCPU.setText(String.valueOf(p.getProgramCounter()));
-            lblMarProcesoCPU.setText(String.valueOf(p.getMemoryAddressRegister())); // O como obtengas el MAR
-            lblStatusProcesoCPU.setText(p.getState().toString()); // Debería ser "Ejecutando"
+            lblMarProcesoCPU.setText(String.valueOf(p.getMemoryAddressRegister())); 
+            lblStatusProcesoCPU.setText(p.getState().toString()); 
             lblTipoProcesoCPU.setText(p.isIsIOBound() ? "I/O Bound" : "CPU Bound");
         } else {
-            // No hay proceso de usuario, CPU idle o ejecutando OS
             lblNombreProcesoCPU.setText("Proceso System"); // O "Idle"
             lblIdProcesoCPU.setText("N/A");
             lblPcProcesoCPU.setText("N/A");
             lblMarProcesoCPU.setText("N/A");
-            lblStatusProcesoCPU.setText("N/A"); // O "Idle"
-            lblTipoProcesoCPU.setText("N/A"); // O "Kernel"
+            lblStatusProcesoCPU.setText("N/A"); 
+            lblTipoProcesoCPU.setText("N/A"); 
         }
-
-        // (Opcional) Refrescar el panel si es necesario, aunque cambiar texto de JLabel suele ser automático
-        // PanelProcesoEjecucion.revalidate();
-        // PanelProcesoEjecucion.repaint();
     }
     
     /**
@@ -479,11 +591,10 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel7 = new javax.swing.JPanel();
         TextRelojGlobal = new javax.swing.JLabel();
         jLabel12 = new javax.swing.JLabel();
-        BotonReiniciar = new javax.swing.JButton();
         BotonIniciar = new javax.swing.JButton();
-        BotonPausar = new javax.swing.JButton();
         jComboAlgoritmos = new javax.swing.JComboBox<>();
         jLabel17 = new javax.swing.JLabel();
+        Boton20 = new javax.swing.JButton();
         jPanel2 = new javax.swing.JPanel();
         jLabel13 = new javax.swing.JLabel();
         BotonCrearProceso = new javax.swing.JButton();
@@ -549,22 +660,11 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel12.setForeground(new java.awt.Color(255, 255, 255));
         jLabel12.setText("Algoritmo:");
 
-        BotonReiniciar.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
-        BotonReiniciar.setText("Reiniciar");
-
         BotonIniciar.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
         BotonIniciar.setText("Iniciar");
         BotonIniciar.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 BotonIniciarActionPerformed(evt);
-            }
-        });
-
-        BotonPausar.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
-        BotonPausar.setText("Pausar");
-        BotonPausar.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                BotonPausarActionPerformed(evt);
             }
         });
 
@@ -580,18 +680,24 @@ public class Interfaz extends javax.swing.JFrame {
         jLabel17.setForeground(new java.awt.Color(255, 255, 255));
         jLabel17.setText("Control y Estado del Sistema");
 
+        Boton20.setFont(new java.awt.Font("UD Digi Kyokasho NP", 0, 12)); // NOI18N
+        Boton20.setText("Crear 20 Procesos Automaticos");
+        Boton20.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                Boton20ActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout jPanel7Layout = new javax.swing.GroupLayout(jPanel7);
         jPanel7.setLayout(jPanel7Layout);
         jPanel7Layout.setHorizontalGroup(
             jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel7Layout.createSequentialGroup()
-                .addGap(81, 81, 81)
+                .addContainerGap(32, Short.MAX_VALUE)
+                .addComponent(Boton20)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                 .addComponent(BotonIniciar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addComponent(BotonPausar, javax.swing.GroupLayout.PREFERRED_SIZE, 74, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
-                .addComponent(BotonReiniciar)
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 56, Short.MAX_VALUE)
+                .addGap(50, 50, 50)
                 .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 217, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addContainerGap())
             .addGroup(jPanel7Layout.createSequentialGroup()
@@ -609,22 +715,20 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel7Layout.setVerticalGroup(
             jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel7Layout.createSequentialGroup()
-                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel7Layout.createSequentialGroup()
-                        .addGap(61, 61, 61)
-                        .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                            .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE))
-                        .addGap(8, 8, 8)
-                        .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 26, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 18, Short.MAX_VALUE))
+                .addGap(61, 61, 61)
+                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jComboAlgoritmos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 50, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(jPanel7Layout.createSequentialGroup()
-                        .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addGap(8, 8, 8)
+                        .addComponent(TextRelojGlobal, javax.swing.GroupLayout.PREFERRED_SIZE, 26, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addGroup(jPanel7Layout.createSequentialGroup()
+                        .addGap(18, 18, 18)
                         .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                             .addComponent(BotonIniciar)
-                            .addComponent(BotonPausar)
-                            .addComponent(BotonReiniciar))))
-                .addGap(95, 95, 95))
+                            .addComponent(Boton20))))
+                .addContainerGap(107, Short.MAX_VALUE))
             .addGroup(jPanel7Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                 .addGroup(jPanel7Layout.createSequentialGroup()
                     .addGap(16, 16, 16)
@@ -725,30 +829,31 @@ public class Interfaz extends javax.swing.JFrame {
         jPanel3Layout.setHorizontalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel3Layout.createSequentialGroup()
-                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel3Layout.createSequentialGroup()
-                        .addGap(75, 75, 75)
-                        .addComponent(jLabel25))
-                    .addGroup(jPanel3Layout.createSequentialGroup()
-                        .addGap(45, 45, 45)
-                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, 223, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
-                .addGap(48, 48, 48)
-                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jLabel26)
-                    .addComponent(PanelBloqueados_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(PanelBloqueados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addContainerGap(69, Short.MAX_VALUE))
-            .addGroup(jPanel3Layout.createSequentialGroup()
                 .addGap(119, 119, 119)
                 .addComponent(jLabel23)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jLabel16)
                 .addGap(132, 132, 132))
             .addGroup(jPanel3Layout.createSequentialGroup()
-                .addGap(196, 196, 196)
-                .addComponent(jLabel22, javax.swing.GroupLayout.PREFERRED_SIZE, 230, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel3Layout.createSequentialGroup()
+                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(jPanel3Layout.createSequentialGroup()
+                                .addGap(75, 75, 75)
+                                .addComponent(jLabel25))
+                            .addGroup(jPanel3Layout.createSequentialGroup()
+                                .addGap(45, 45, 45)
+                                .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                                    .addComponent(PanelListos, javax.swing.GroupLayout.PREFERRED_SIZE, 223, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                    .addComponent(PanelListos_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
+                        .addGap(48, 48, 48)
+                        .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(jLabel26)
+                            .addComponent(PanelBloqueados_Suspendidos, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                            .addComponent(PanelBloqueados, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                    .addGroup(jPanel3Layout.createSequentialGroup()
+                        .addGap(196, 196, 196)
+                        .addComponent(jLabel22, javax.swing.GroupLayout.PREFERRED_SIZE, 230, javax.swing.GroupLayout.PREFERRED_SIZE)))
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
         jPanel3Layout.setVerticalGroup(
@@ -1070,7 +1175,7 @@ public class Interfaz extends javax.swing.JFrame {
             .addGroup(jPanel15Layout.createSequentialGroup()
                 .addGap(64, 64, 64)
                 .addComponent(jLabel20, javax.swing.GroupLayout.PREFERRED_SIZE, 296, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addContainerGap(88, Short.MAX_VALUE))
             .addGroup(jPanel15Layout.createSequentialGroup()
                 .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(jPanel15Layout.createSequentialGroup()
@@ -1079,15 +1184,14 @@ public class Interfaz extends javax.swing.JFrame {
                     .addGroup(jPanel15Layout.createSequentialGroup()
                         .addGap(23, 23, 23)
                         .addComponent(BotonCambiarAlgoritmo)))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addGroup(jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(jPanel15Layout.createSequentialGroup()
-                        .addGap(61, 61, 61)
-                        .addComponent(cycleDurationSlider, javax.swing.GroupLayout.PREFERRED_SIZE, 236, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 11, Short.MAX_VALUE))
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel15Layout.createSequentialGroup()
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                         .addComponent(jLabel27, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(40, 40, 40))))
+                        .addGap(40, 40, 40))
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel15Layout.createSequentialGroup()
+                        .addComponent(cycleDurationSlider, javax.swing.GroupLayout.PREFERRED_SIZE, 236, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(20, 20, 20))))
         );
         jPanel15Layout.setVerticalGroup(
             jPanel15Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -1205,10 +1309,6 @@ public class Interfaz extends javax.swing.JFrame {
         pack();
     }// </editor-fold>//GEN-END:initComponents
 
-    private void BotonPausarActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonPausarActionPerformed
-        // TODO add your handling code here:
-    }//GEN-LAST:event_BotonPausarActionPerformed
-
     private void BotonCrearProcesoActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonCrearProcesoActionPerformed
         CrearProcesoDialog dialogo = new CrearProcesoDialog(this, true);
         dialogo.setLocationRelativeTo(this);
@@ -1224,6 +1324,65 @@ public class Interfaz extends javax.swing.JFrame {
 
     private void BotonCambiarAlgoritmoActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonCambiarAlgoritmoActionPerformed
         // TODO add your handling code here:
+        // 1. Verifica si la simulación está corriendo
+            //    (Accedemos a la variable estática 'planificador')
+            if (MotorSimulacion.planificador == null) { 
+                JOptionPane.showMessageDialog(this,
+                    "Debe iniciar la simulación primero para cambiar el algoritmo.",
+                    "Aviso", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            // --- LÓGICA DEL DIÁLOGO ---
+
+            // 2. Define las opciones que aparecerán en el diálogo
+            String[] opcionesAlgoritmo = {
+                "First-Come, First-Served",
+                "Round Robin",
+                "Shortest Process Next",
+                "Shortest Remaining Time",
+                "Highest Response-Ratio Next",
+                "Feedback"
+            };
+
+            // 3. Usa el JComboBox para saber la selección actual
+            String seleccionPorDefecto = jComboAlgoritmos.getSelectedItem().toString();
+
+            // 4. Muestra el diálogo emergente
+            Object seleccion = JOptionPane.showInputDialog(
+                this, "Seleccione el nuevo algoritmo:",
+                "Intercambiar Algoritmo", JOptionPane.PLAIN_MESSAGE,
+                null, opcionesAlgoritmo, seleccionPorDefecto
+            );
+            // --- FIN DEL DIÁLOGO ---
+
+            // 5. Procesa el resultado
+            if (seleccion == null) {
+                return; // Usuario canceló
+            }
+
+            String nombreNuevoAlgoritmo = (String) seleccion;
+            SchedulerAlgorithm nuevoAlgo = seleccionarAlgoritmo(nombreNuevoAlgoritmo);
+
+            // 7. Verifica si realmente es un algoritmo diferente
+            //    (Asumiendo que 'algo' en Planificador es público, como dijiste)
+            if (MotorSimulacion.planificador.algo.getClass().equals(nuevoAlgo.getClass())) { 
+                JOptionPane.showMessageDialog(this,
+                    "La simulación ya está usando " + nombreNuevoAlgoritmo + ".",
+                    "Aviso", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+
+            // 8. Llama al método en el planificador guardado
+            MotorSimulacion.planificador.cambiarAlgoritmo(nuevoAlgo); 
+
+            // 9. Informa al usuario
+            JOptionPane.showMessageDialog(this,
+                "Algoritmo cambiado exitosamente a: " + nombreNuevoAlgoritmo,
+                "Cambio Exitoso", JOptionPane.INFORMATION_MESSAGE);
+
+            // 10. Actualiza el JComboBox principal
+            jComboAlgoritmos.setSelectedItem(nombreNuevoAlgoritmo);
     }//GEN-LAST:event_BotonCambiarAlgoritmoActionPerformed
 
     private void btnVerNuevosActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnVerNuevosActionPerformed
@@ -1241,6 +1400,8 @@ public class Interfaz extends javax.swing.JFrame {
     private void BotonIniciarActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_BotonIniciarActionPerformed
         // TODO add your handling code here:
             // 1. Lee la selección del JComboBox
+            
+            limpiarSistemaParaNuevaSimulacion();
             String nombreAlgoritmoSeleccionado = (String) jComboAlgoritmos.getSelectedItem();
             Planificacion.SchedulerAlgorithm algoritmo = seleccionarAlgoritmo(nombreAlgoritmoSeleccionado); // Usa el método que te di antes
 
@@ -1281,13 +1442,18 @@ public class Interfaz extends javax.swing.JFrame {
 
             // --- ¡Inicio de la Simulación! ---
             System.out.println("GUI: Iniciando simulación con " + totalProcesos + " procesos y algoritmo " + nombreAlgoritmoSeleccionado + "...");
+            
+            simulacionCorriendo = true;    // 1. ANTES de empezar: Indica que está corriendo
+            actualizarEstadoBotones(); // 3. Llama al método para deshabilitar botones
 
             // 3. Lanza el MOTOR DE SIMULACIÓN (tu ConsoleSimulator/MotorSimulacion) en un HILO NUEVO
             //    Esto es CRUCIAL para que la GUI no se congele.
             new Thread(() -> {
                 // Llama a los métodos ESTÁTICOS de tu clase MotorSimulacion
+                
+                int cycleMs = cycleDurationSlider.getValue();
                 // Asegúrate de usar la versión con PMP controlando admisión (la última que te di)
-                MotorSimulacion.iniciarSimulacion(algoritmoFinal);   // Inicia los hilos PMP, RR, GestorIO
+                MotorSimulacion.iniciarSimulacion(algoritmoFinal, cycleMs);   // Inicia los hilos PMP, RR, GestorIO
                 MotorSimulacion.esperarFinSimulacion(totalProcesos); // Espera a que terminen los procesos
                 MotorSimulacion.detenerSimulacion();                 // Detiene los hilos auxiliares
 
@@ -1298,7 +1464,12 @@ public class Interfaz extends javax.swing.JFrame {
                     if (guiTimer != null) {
                         guiTimer.stop(); // Detiene el refresco de la GUI
                         System.out.println("GUI: Timer detenido.");
+                        
                     }
+                    
+                    simulacionCorriendo = false;   // 1. DESPUÉS de terminar: Indica que ya no corre
+                    //simulacionCompletada = true;   // 2. Indica que ya terminó (bloqueo permanente)
+                    
                     actualizarEstadoBotones(); // Reactiva botones Iniciar/Crear
                     System.out.println("GUI: Simulación finalizada en el backend.");
                     JOptionPane.showMessageDialog(Interfaz.this, // Usa Interfaz.this como parent
@@ -1328,138 +1499,168 @@ public class Interfaz extends javax.swing.JFrame {
     }//GEN-LAST:event_cycleDurationSliderStateChanged
 
     private void btnVerMetricasActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnVerMetricasActionPerformed
-        // TODO add your handling code here:
         long tiempoTotalSimulacion = Interfaz.globalClock.get();
-    
-    // Si la simulación apenas comienza, no hay nada que mostrar.
-    if (tiempoTotalSimulacion == 0) {
-        JOptionPane.showMessageDialog(this, 
-                "La simulación aún no ha avanzado.", 
-                "Métricas de Rendimiento", 
-                JOptionPane.INFORMATION_MESSAGE);
-        return;
-    }
-
-    // --- Variables para los cálculos ---
-    int numProcesosTerminados = 0;
-    long tiempoOcupadoCPU = 0;
-    long sumaTiemposDeRespuesta = 0;
-    
-    // Para Fairness (Equidad), usaremos una lista temporal
-    EstructurasDeDatos.ListaSimple<Long> tiemposCPU = new EstructurasDeDatos.ListaSimple<>();
-
-    // --- 1. Adquirir el semáforo para leer la cola de terminados ---
-    try {
-        // Usamos tryAcquire para no bloquear la UI si el semáforo está ocupado
-        if (Interfaz.semaforoTerminados.tryAcquire(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            try {
-                numProcesosTerminados = Interfaz.colaTerminados.getSize();
-                
-                if (numProcesosTerminados == 0) {
-                    JOptionPane.showMessageDialog(this, 
-                            "Aún no ha terminado ningún proceso.", 
-                            "Métricas de Rendimiento", 
-                            JOptionPane.INFORMATION_MESSAGE);
-                    return; // Salimos del método
-                }
-
-                // --- 2. Iterar la cola de terminados ---
-                Nodo<Process> actual = Interfaz.colaTerminados.getpFirst();
-                while (actual != null) {
-                    Process p = actual.getData();
-
-                    // Suma para Utilización de CPU
-                    tiempoOcupadoCPU += p.executedCycles;
-
-                    // Suma para Tiempo de Respuesta
-                    if (p.firstRunCycle >= 0) { // Asegurarse de que el proceso al menos corrió una vez
-                        sumaTiemposDeRespuesta += (p.firstRunCycle - p.arrivalCycle);
-                    }
-
-                    // Guardar para Fairness
-                    tiemposCPU.addAtTheEnd((long) p.executedCycles);
-
-                    actual = actual.getPnext();
-                }
-                
-            } finally {
-                Interfaz.semaforoTerminados.release(); // ¡Fundamental liberar!
-            }
-        } else {
-            // Si no se pudo adquirir el semáforo, avisa al usuario
+        
+        if (tiempoTotalSimulacion == 0) {
             JOptionPane.showMessageDialog(this, 
-                    "No se pudo calcular: El semáforo de procesos terminados está ocupado.\nIntente de nuevo.", 
-                    "Error de Concurrencia", 
-                    JOptionPane.WARNING_MESSAGE);
+                    "La simulación aún no ha avanzado.", 
+                    "Métricas de Rendimiento", 
+                    JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-    } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return;
-    }
 
-    // --- 3. Calcular las Métricas Finales ---
+        int numProcesosTerminados = 0;
+        long tiempoOcupadoCPU = 0;
+        long sumaTiemposDeRespuesta = 0;
+        EstructurasDeDatos.ListaSimple<Long> tiemposCPU = new EstructurasDeDatos.ListaSimple<>();
 
-    // a) Throughput
-    // (Usamos segundos "reales" asumiendo 1 ciclo = 1 segundo, 
-    // o simplemente ciclos como unidad de tiempo)
-    double throughput = (double) numProcesosTerminados / (double) tiempoTotalSimulacion;
+        try {
+            if (Interfaz.semaforoTerminados.tryAcquire(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                try {
+                    numProcesosTerminados = Interfaz.colaTerminados.getSize();
+                    
+                    if (numProcesosTerminados == 0) {
+                        JOptionPane.showMessageDialog(this, 
+                                "Aún no ha terminado ningún proceso.", 
+                                "Métricas de Rendimiento", 
+                                JOptionPane.INFORMATION_MESSAGE);
+                        return;
+                    }
 
-    // b) Utilización del Procesador
-    double utilizacionCPU = ((double) tiempoOcupadoCPU / (double) tiempoTotalSimulacion) * 100.0;
+                    Nodo<Process> actual = Interfaz.colaTerminados.getpFirst();
+                    while (actual != null) {
+                        Process p = actual.getData();
+                        tiempoOcupadoCPU += p.executedCycles;
 
-    // c) Tiempo de Respuesta Promedio
-    double tiempoRespuestaPromedio = (double) sumaTiemposDeRespuesta / (double) numProcesosTerminados;
+                        if (p.firstRunCycle >= 0) { 
+                            sumaTiemposDeRespuesta += (p.firstRunCycle - p.arrivalCycle);
+                        }
+                        tiemposCPU.addAtTheEnd((long) p.executedCycles);
+                        actual = actual.getPnext();
+                    }
+                    
+                } finally {
+                    Interfaz.semaforoTerminados.release();
+                }
+            } else {
+                JOptionPane.showMessageDialog(this, 
+                        "No se pudo calcular: El semáforo de terminados está ocupado.\nIntente de nuevo.", 
+                        "Error de Concurrencia", 
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
 
-    // d) Equidad (Fairness) - Calculando Desviación Estándar
-    // (Una desviación baja es MÁS justo, una alta es MENOS justo)
-    double mediaTiemposCPU = (double) tiempoOcupadoCPU / (double) numProcesosTerminados;
-    double sumaDeCuadrados = 0.0;
-    
-    Nodo<Long> nodoTiempo = tiemposCPU.getpFirst();
-    while (nodoTiempo != null) {
-        sumaDeCuadrados += Math.pow(nodoTiempo.getData() - mediaTiemposCPU, 2);
-        nodoTiempo = nodoTiempo.getPnext();
-    }
-    double varianza = sumaDeCuadrados / (double) numProcesosTerminados;
-    double desviacionEstandar = Math.sqrt(varianza);
+        // --- 3. Calcular Métricas ---
+        double throughput = (double) numProcesosTerminados / (double) tiempoTotalSimulacion;
+        double utilizacionCPU = ((double) tiempoOcupadoCPU / (double) tiempoTotalSimulacion) * 100.0;
+        double tiempoRespuestaPromedio = (double) sumaTiemposDeRespuesta / (double) numProcesosTerminados;
 
+        // Equidad (Fairness)
+        double mediaTiemposCPU = (double) tiempoOcupadoCPU / (double) numProcesosTerminados;
+        double sumaDeCuadrados = 0.0;
+        Nodo<Long> nodoTiempo = tiemposCPU.getpFirst();
+        while (nodoTiempo != null) {
+            sumaDeCuadrados += Math.pow(nodoTiempo.getData() - mediaTiemposCPU, 2);
+            nodoTiempo = nodoTiempo.getPnext();
+        }
+        double varianza = sumaDeCuadrados / (double) numProcesosTerminados;
+        double desviacionEstandar = Math.sqrt(varianza);
 
-    // --- 4. Mostrar Resultados ---
-    
-    // Formatear el texto para mostrarlo bonito
-    String mensaje = String.format(
-        "Métricas de Rendimiento (Basado en %d procesos terminados):\n\n" +
-        "Tiempo Total de Simulación: %d ciclos\n\n" +
-        "1. Throughput:\n" +
-        "   %.4f procesos por ciclo\n\n" +
-        "2. Utilización del Procesador:\n" +
-        "   %.2f %% (CPU ocupada %d de %d ciclos)\n\n" +
-        "3. Tiempo de Respuesta Promedio:\n" +
-        "   %.2f ciclos (tiempo promedio desde 'Llegada' hasta '1ra Ejecución')\n\n" +
-        "4. Equidad (Fairness) - Desviación Estándar:\n" +
-        "   %.2f ciclos (Un valor bajo significa que los procesos recibieron\n" +
-        "   tiempos de CPU similares, lo cual es más justo).",
+        // --- 4. Mostrar Resultados ---
+        String mensaje = String.format(
+            "Métricas de Rendimiento (Basado en %d procesos terminados):\n\n" +
+            "Tiempo Total de Simulación: %d ciclos\n\n" +
+            "1. Throughput:\n" +
+            "   %.4f procesos por ciclo\n\n" +
+            "2. Utilización del Procesador:\n" +
+            "   %.2f %% (CPU ocupada %d de %d ciclos)\n\n" +
+            "3. Tiempo de Respuesta Promedio:\n" +
+            "   %.2f ciclos (desde 'Llegada' hasta '1ra Ejecución')\n\n" +
+            "4. Equidad (Fairness) - Desviación Estándar:\n" +
+            "   %.2f ciclos (Un valor bajo es más justo).",
+            
+            numProcesosTerminados,
+            tiempoTotalSimulacion,
+            throughput,
+            utilizacionCPU, tiempoOcupadoCPU, tiempoTotalSimulacion,
+            tiempoRespuestaPromedio,
+            desviacionEstandar
+        );
+
+        JTextArea textArea = new JTextArea(mensaje);
+        textArea.setEditable(false);
+        textArea.setOpaque(false);
+        textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
         
-        numProcesosTerminados,
-        tiempoTotalSimulacion,
-        throughput,
-        utilizacionCPU, tiempoOcupadoCPU, tiempoTotalSimulacion,
-        tiempoRespuestaPromedio,
-        desviacionEstandar
-    );
+        JOptionPane.showMessageDialog(this, 
+                new JScrollPane(textArea), 
+                "Métricas de Rendimiento", 
+                JOptionPane.INFORMATION_MESSAGE);
 
-    // Usar un JTextArea para que el texto sea seleccionable y multilínea
-    JTextArea textArea = new JTextArea(mensaje);
-    textArea.setEditable(false);
-    textArea.setOpaque(false);
-    textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
-    
-    JOptionPane.showMessageDialog(this, 
-            new JScrollPane(textArea), 
-            "Métricas de Rendimiento", 
-            JOptionPane.INFORMATION_MESSAGE);
     }//GEN-LAST:event_btnVerMetricasActionPerformed
+
+    private void Boton20ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_Boton20ActionPerformed
+        // TODO add your handling code here:
+        
+        Random rand = new Random();
+    int procesosCreados = 0;
+    
+    System.out.println("GUI: Creando 20 procesos aleatorios...");
+    
+    for (int i = 0; i < 20; i++) {
+        try {
+            // 1. Nombre aleatorio
+            String nombre = "P_Rand_" + (i + 1);
+            
+            // 2. Tiempo total aleatorio (instrucciones) (ej. entre 15 y 40 ciclos)
+            int tiempoTotal = rand.nextInt(26) + 15; // Rango 15-40
+            
+            // 3. Tipo aleatorio (CPU o I/O)
+            boolean esIOBound = rand.nextBoolean();
+            
+            // 4. Parámetros de Excepción (I/O)
+            int valorExcepcion = 0;
+            if (esIOBound) {
+                // Si es I/O, generamos un valor aleatorio (ej. 3 a 8 ciclos)
+                valorExcepcion = rand.nextInt(6) + 3; // Rango 3-8
+            }
+            
+            // 5. --- ¡LÍNEA CLAVE! ---
+            // Creamos el proceso usando el constructor que me diste.
+            // Usamos 'valorExcepcion' tanto para 'exceptionPeriod' como 'exceptionService'.
+            Process p = new ProccesFabrication.Process(
+                nombre, 
+                tiempoTotal,         // instructions
+                esIOBound, 
+                valorExcepcion,      // exceptionPeriod
+                valorExcepcion       // exceptionService
+            );
+            
+            // 6. Añadir a la cola de Nuevos
+            Interfaz.semaforoNuevos.acquire(); // Protege la cola
+            try {
+                Interfaz.colaNuevos.insert(p);
+            } finally {
+                Interfaz.semaforoNuevos.release();
+            }
+            
+            procesosCreados++;
+            
+        } catch (Exception e) {
+            System.err.println("Error creando proceso aleatorio: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    JOptionPane.showMessageDialog(this, "Se crearon " + procesosCreados + " procesos aleatorios.");
+    
+    // Actualiza los botones "Ver Nuevos" e "Iniciar"
+    actualizarEstadoBotones();
+    }//GEN-LAST:event_Boton20ActionPerformed
 
     /**
      * @param args the command line arguments
@@ -1497,12 +1698,11 @@ public class Interfaz extends javax.swing.JFrame {
     }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
+    private javax.swing.JButton Boton20;
     private javax.swing.JButton BotonCambiarAlgoritmo;
     private javax.swing.JButton BotonCrearProceso;
     private javax.swing.JButton BotonEscribir;
     private javax.swing.JButton BotonIniciar;
-    private javax.swing.JButton BotonPausar;
-    private javax.swing.JButton BotonReiniciar;
     private javax.swing.JPanel PanelBloqueados;
     private javax.swing.JPanel PanelBloqueados_Suspendidos;
     private javax.swing.JPanel PanelListos;

@@ -36,7 +36,7 @@ public class MotorSimulacion {
 
     public static Cola<Thread> hilosProcesos = new Cola<>();
     public static SimpleSemaphore semaforoHilosProcesos = new SimpleSemaphore(1);
-
+    
     public static void main(String[] args) {
 
         System.out.println("--- INICIANDO SIMULADOR DE CONSOLA ---");
@@ -47,7 +47,8 @@ public class MotorSimulacion {
         int totalProcesosCreados = crearProcesosDePrueba();
 
         // Inicia los hilos auxiliares (Planificadores, GestorIO)
-        iniciarSimulacion(algoritmo);
+        int velocidadDePrueba = 1000; 
+        iniciarSimulacion(algoritmo, velocidadDePrueba);
         
         // Espera a que el número de terminados coincida con los creados
         esperarFinSimulacion(totalProcesosCreados); 
@@ -99,16 +100,20 @@ public class MotorSimulacion {
      * Inicia los hilos de fondo (Planificadores y GestorIO).
      * YA NO inicia los hilos de los procesos.
      */
-    static void iniciarSimulacion(SchedulerAlgorithm algoritmo) {
+    static void iniciarSimulacion(SchedulerAlgorithm algoritmo, int cycleMs) {
         System.out.println("Iniciando simulación...");
+        
+        Interfaz.logEvento("Motor: Iniciando simulación...");
 
         // Iniciar Planificador primero
         planificador = new Planificador(algoritmo);
+        Interfaz.logEvento("Motor: Usando algoritmo " + algoritmo.getClass().getSimpleName());
         // Duración de ciclo desde config/slider
-        int ms = ConfigIO.loadCycleMs();
-        planificador.setCycleMs(ms);
+        //int ms = ConfigIO.loadCycleMs();
+        planificador.setCycleMs(cycleMs);
         hiloPlanificador = new Thread(planificador, "Hilo-Planificador");
         hiloPlanificador.start();
+        Interfaz.logEvento("Motor: Hilo Planificador (LCP) iniciado.");
         System.out.println("Hilo Planificador (Corto Plazo) iniciado.");
 
         // Mover procesos de Nuevos a RAM/READY y lanzar hilos de proceso
@@ -142,12 +147,14 @@ public class MotorSimulacion {
         gestorIO = new GestorIO();
         hiloGestorIO = new Thread(gestorIO, "Hilo-GestorIO");
         hiloGestorIO.start();
+        Interfaz.logEvento("Motor: Hilo GestorIO iniciado.");
         System.out.println("Hilo GestorIO iniciado.");
 
         // PMP
         pmp = new PlanificadorMedianoPlazo();
         hiloPMP = new Thread(pmp, "Hilo-PMP");
         hiloPMP.start();
+        Interfaz.logEvento("Motor: Hilo Planificador (Mediano Plazo) iniciado.");
         System.out.println("Hilo Planificador de Mediano Plazo iniciado.");
 
         System.out.println("\n--- Simulación en curso ---");

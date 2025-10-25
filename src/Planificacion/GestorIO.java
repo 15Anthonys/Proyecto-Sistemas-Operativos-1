@@ -5,11 +5,11 @@ import EstructurasDeDatos.ListaSimple;
 import EstructurasDeDatos.Nodo;
 import ProccesFabrication.Process;
 import ProccesFabrication.ProcessState;
-import soplanificacion.Interfaz;
+import soplanificacion.Interfaz; // Importa la Interfaz para el log
 
 /**
  * Hilo que gestiona AMBAS colas de Bloqueados (RAM y Disco).
- * (VERSIÓN ACTUALIZADA PARA ESTADOS SUSPENDIDOS)
+ * (VERSIÓN ACTUALIZADA CON LOGS)
  */
 public class GestorIO implements Runnable {
     
@@ -29,7 +29,8 @@ public class GestorIO implements Runnable {
         while (simulacionActiva) {
             try {
                 // 1. Duerme un "ciclo" de E/S
-                Thread.sleep(1000); // Representa 1 ciclo de tiempo
+                // (Reducido a 500ms para que sea un poco más rápido que el planificador)
+                Thread.sleep(500); 
                 
                 // --- PARTE 1: MARCAR (RAM) ---
                 Interfaz.semaforoBloqueados.acquire();
@@ -66,13 +67,15 @@ public class GestorIO implements Runnable {
                     try {
                         p.setState(ProcessState.READY);
                         Interfaz.colaListos.insert(p);
-                        System.out.println("GESTOR E/S: Proceso " + p.getName() + " (RAM) -> Listos (RAM)");
+                        
+                        // --- LOG --- (Reemplaza System.out)
+                        Interfaz.logEvento("GestorIO: " + p.getName() + " (RAM) -> Listos (RAM).");
+                        
                     } finally {
                         Interfaz.semaforoListos.release();
                     }
 
-                    // 5c. ¡¡DESPIERTA AL HILO!! (Tu Process.java lo necesita)
-                    // (Esto arregla un bug que tenías)
+                    // 5c. ¡¡DESPIERTA AL HILO!!
                     synchronized (p) {
                         p.notify();
                     }
@@ -95,25 +98,35 @@ public class GestorIO implements Runnable {
                     // 6b. Mete en Listos/Susp (Disco)
                     Interfaz.semaforoListosSuspendidos.acquire();
                     try {
-                        p.setState(ProcessState.SUSPENDED_READY); // Tu Enum usa este nombre
+                        p.setState(ProcessState.SUSPENDED_READY);
                         Interfaz.colaListosSuspendidos.insert(p);
-                        System.out.println("GESTOR E/S: Proceso " + p.getName() + " (Disco) -> Listos/Susp (Disco)");
+                        
+                        // --- LOG --- (Reemplaza System.out)
+                        Interfaz.logEvento("GestorIO: " + p.getName() + " (Disco) -> Listos/Susp (Disco).");
+                        
                     } finally {
                         Interfaz.semaforoListosSuspendidos.release();
                     }
                     
                     // 6c. ¡¡NO SE HACE NOTIFY!! El proceso sigue en disco.
-                    // El PMP se encargará de él.
                 }
 
             } catch (InterruptedException e) {
                 simulacionActiva = false;
-                System.out.println("Gestor de E/S interrumpido.");
+                
+                // --- LOG --- (Reemplaza System.out)
+                Interfaz.logEvento("GestorIO: Hilo interrumpido. Deteniendo.");
+                
             } catch (Exception e) {
-                System.err.println("Error en GestorIO: " + e.getMessage());
+                
+                // --- LOG --- (Reemplaza System.err)
+                Interfaz.logEvento("GestorIO: ¡ERROR INESPERADO! " + e.getMessage());
                 e.printStackTrace();
             }
         } // Fin del while (simulacionActiva)
+        
+        // --- LOG ---
+        Interfaz.logEvento("GestorIO: Hilo detenido.");
     }
     
     /**
@@ -128,6 +141,10 @@ public class GestorIO implements Runnable {
             p.setTiempoBloqueadoRestante(p.getTiempoBloqueadoRestante() - 1);
             
             if (p.getTiempoBloqueadoRestante() <= 0) {
+                // --- LOG ---
+                // (Logueamos cuando la I/O se completa)
+                Interfaz.logEvento("GestorIO: I/O de " + p.getName() + " completada. Marcado para mover.");
+                
                 listaMarcados.addAtTheEnd(p); // Lo "marca"
             }
             actual = actual.getPnext();

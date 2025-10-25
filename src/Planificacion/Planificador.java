@@ -5,78 +5,110 @@ import ProccesFabrication.ProcessState;
 import EstructurasDeDatos.Cola;
 import EstructurasDeDatos.Nodo;
 import soplanificacion.Interfaz;
+import javax.swing.SwingUtilities; // Asegúrate de tener esta importación
 
 public class Planificador implements Runnable {
-    private final SchedulerAlgorithm algo;
+    public volatile SchedulerAlgorithm algo; // 'volatile' y público (como dijiste)
     private volatile boolean running = true;
     private volatile int cycleMs = 1000;
 
-    // --- NUEVO: Variables para el gráfico de utilización ---
+    // --- Variables para el gráfico de utilización ---
     private int cyclesBusy = 0;
     private int cyclesIdle = 0;
-    private final int SAMPLE_PERIOD = 10; // Trazar un punto en el gráfico cada 10 ciclos
-    // --- FIN DE NUEVO ---
+    private final int SAMPLE_PERIOD = 10;
 
-    public Planificador(SchedulerAlgorithm algo) { this.algo = algo; }
+    public Planificador(SchedulerAlgorithm algo) {
+        this.algo = algo;
+    }
 
     public void setCycleMs(int ms) { this.cycleMs = Math.max(1, ms); }
     public int getCycleMs() { return cycleMs; }
     public void detener() { running = false; }
 
+    /**
+     * Añade un proceso a la cola de Listos (método seguro).
+     */
     public void admitirAListos(Process p, long now) {
-        try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
-        try { algo.enqueue(Interfaz.colaListos, p, now); } 
-        finally { Interfaz.semaforoListos.release(); }
+        try {
+            Interfaz.semaforoListos.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        try {
+            // --- LOG ---
+            Interfaz.logEvento("LCP: Proceso " + p.getName() + " admitido a cola 'Listos'.");
+            algo.enqueue(Interfaz.colaListos, p, now);
+        } finally {
+            Interfaz.semaforoListos.release();
+        }
     }
 
+    /**
+     * Cambia el algoritmo en tiempo de ejecución (método seguro).
+     */
     public void cambiarAlgoritmo(SchedulerAlgorithm nuevo) {
-        try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+        Interfaz.logEvento("LCP: Solicitud de cambio de algoritmo a " + nuevo.getClass().getSimpleName());
+        try {
+            Interfaz.semaforoListos.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
         try {
             Cola<Process> temp = new Cola<>();
-            while (!Interfaz.colaListos.isEmpty()) temp.insert(Interfaz.colaListos.pop());
+            while (!Interfaz.colaListos.isEmpty()) {
+                temp.insert(Interfaz.colaListos.pop());
+            }
             long now = Interfaz.globalClock.get();
-            while (!temp.isEmpty()) nuevo.enqueue(Interfaz.colaListos, temp.pop(), now);
-        } finally { Interfaz.semaforoListos.release(); }
+            while (!temp.isEmpty()) {
+                nuevo.enqueue(Interfaz.colaListos, temp.pop(), now);
+            }
+            this.algo = nuevo; // Actualiza el algoritmo
+            Interfaz.logEvento("LCP: Algoritmo cambiado exitosamente.");
+        } finally {
+            Interfaz.semaforoListos.release();
+        }
     }
 
     @Override
     public void run() {
         while (running) {
-            try { Thread.sleep(cycleMs); } catch (InterruptedException ignored) {}
+            try {
+                Thread.sleep(cycleMs);
+            } catch (InterruptedException ignored) {
+            }
 
             // avanza reloj global
-            long now = Interfaz.globalClock.incrementAndGet(); 
+            long now = Interfaz.globalClock.incrementAndGet();
 
-            // --- NUEVO: Lógica de recolección de datos para el gráfico ---
-            // Capturamos el estado ANTES de cualquier lógica de despacho
+            // --- Lógica de recolección de datos para el gráfico ---
             if (Interfaz.procesoEnCPU != null) {
                 cyclesBusy++;
             } else {
                 cyclesIdle++;
             }
 
-            // Revisa si es momento de guardar la muestra
             if ((cyclesBusy + cyclesIdle) >= SAMPLE_PERIOD) {
-                // Calcula la utilización en esta ventana de 10 ciclos
-                double utilization = ((double) cyclesBusy / (double) (cyclesBusy + cyclesIdle)) * 100.0;
-                
-                // Añade el dato al gráfico (X=tiempo, Y=utilización)
-                // (XYSeries es thread-safe, no necesitamos semáforo para .add)
-                Interfaz.seriesUtilizacion.add(now, utilization);
-
-                // Resetea contadores para la próxima ventana
+                final double utilization = ((double) cyclesBusy / (double) (cyclesBusy + cyclesIdle)) * 100.0;
+                final long timeForGraph = now;
+                SwingUtilities.invokeLater(() -> {
+                    Interfaz.seriesUtilizacion.add(timeForGraph, utilization);
+                });
                 cyclesBusy = 0;
                 cyclesIdle = 0;
             }
-            // --- FIN DE NUEVO ---
+            // --- Fin Lógica Gráfico ---
 
 
-            // --- Lógica de planificación existente ---
+            // --- Lógica de planificación ---
 
-            // Expropiación por política
+            // Expropiación por política (ej. SRT)
             Process current = Interfaz.procesoEnCPU;
             if (current != null && algo.isPreemptive()) {
                 if (algo.shouldPreempt(current, Interfaz.colaListos, now)) {
+                    // --- LOG ---
+                    Interfaz.logEvento("LCP: Expropiando " + current.getName() + " (Política: " + algo.getClass().getSimpleName() + ").");
                     current.setState(ProcessState.READY);
                     if (algo instanceof FeedbackAlgorithm) {
                         ((FeedbackAlgorithm) algo).onQuantumExpired(current, now);
@@ -87,52 +119,91 @@ public class Planificador implements Runnable {
                 }
             }
 
-            // Despacho
+            // Despacho (si la CPU está libre)
             if (Interfaz.procesoEnCPU == null) {
                 Process next = null;
-                try { Interfaz.semaforoListos.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); continue; }
-                try { next = algo.pickNext(Interfaz.colaListos, now); } 
-                finally { Interfaz.semaforoListos.release(); }
+                try {
+                    Interfaz.semaforoListos.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    continue;
+                }
+                try {
+                    next = algo.pickNext(Interfaz.colaListos, now);
+                } finally {
+                    Interfaz.semaforoListos.release();
+                }
 
                 if (next != null) {
+                    // --- LOG ---
+                    Interfaz.logEvento("LCP: Despachado Proceso " + next.getName() + " a CPU.");
                     next.setState(ProcessState.RUNNING);
                     if (next.firstRunCycle < 0) next.firstRunCycle = now;
                     Interfaz.procesoEnCPU = next;
+                } else {
+                    // --- LOG ---
+                    // (Este log solo aparecerá una vez y luego se repetirá por el "cyclesIdle")
+                    if (cyclesIdle == 1) { // Loguea solo en el primer ciclo inactivo
+                         Interfaz.logEvento("LCP: CPU Inactiva. No hay procesos en 'Listos'.");
+                    }
                 }
             }
 
-            // Ejecutar 1 ciclo
+            // Ejecutar 1 ciclo del proceso en CPU
             if (Interfaz.procesoEnCPU != null) {
                 Process r = Interfaz.procesoEnCPU;
-                r.step();
+                r.step(); // Ejecuta 1 instrucción
                 if (r.quantumRemaining > 0) r.quantumRemaining--;
 
+                // Revisar si genera I/O
                 if (r.shouldRaiseIO() && !r.isFinished()) {
+                    // --- LOG ---
+                    Interfaz.logEvento("LCP: Proceso " + r.getName() + " bloqueado por I/O. Moviendo a 'Bloqueados'.");
                     Interfaz.procesoEnCPU = null; // Libera la CPU
                     r.setState(ProcessState.BLOCKED);
+                    r.setTiempoBloqueadoRestante(r.getExceptionService());
 
-                    r.setTiempoBloqueadoRestante(r.getExceptionService()); 
-
-                    // Mueve el proceso a la cola de Bloqueados
-                    try { Interfaz.semaforoBloqueados.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); continue; }
-                    try { Interfaz.colaBloqueados.insert(r); } 
-                    finally { Interfaz.semaforoBloqueados.release(); }
-
+                    // Mueve a 'Bloqueados'
+                    try {
+                        Interfaz.semaforoBloqueados.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        continue;
+                    }
+                    try {
+                        Interfaz.colaBloqueados.insert(r);
+                    } finally {
+                        Interfaz.semaforoBloqueados.release();
+                    }
                     continue; // Salta al siguiente ciclo
                 }
 
+                // Revisar si terminó
                 if (r.isFinished()) {
+                    // --- LOG ---
+                    Interfaz.logEvento("LCP: Proceso " + r.getName() + " TERMINADO. Moviendo a 'Terminados'.");
                     r.setState(ProcessState.TERMINATED);
                     r.finishCycle = now;
                     Interfaz.procesoEnCPU = null;
-                    try { Interfaz.semaforoTerminados.acquire(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); continue; }
-                    try { Interfaz.colaTerminados.insert(r); } 
-                    finally { Interfaz.semaforoTerminados.release(); }
+                    try {
+                        Interfaz.semaforoTerminados.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        continue;
+                    }
+                    try {
+                        Interfaz.colaTerminados.insert(r);
+                    } finally {
+                        Interfaz.semaforoTerminados.release();
+                    }
                     Interfaz.contadorProcesosEnMemoria.decrementAndGet();
                     continue;
                 }
 
+                // Revisar si se le acabó el Quantum (RR, Feedback)
                 if (algo.isPreemptive() && algo.shouldPreempt(r, Interfaz.colaListos, now)) {
+                    // --- LOG ---
+                    Interfaz.logEvento("LCP: Quantum de " + r.getName() + " expirado. Moviendo a 'Listos'.");
                     Interfaz.procesoEnCPU = null;
                     r.setState(ProcessState.READY);
                     if (algo instanceof FeedbackAlgorithm) {
@@ -142,6 +213,7 @@ public class Planificador implements Runnable {
                     }
                 }
             }
-        }
-    }
+        } // fin while(running)
+        Interfaz.logEvento("LCP: Hilo detenido.");
+    } // fin run()
 }

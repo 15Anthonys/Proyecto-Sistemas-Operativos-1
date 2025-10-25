@@ -149,6 +149,9 @@
         </Property>
         <Property name="text" type="java.lang.String" value="CPU-Bound"/>
       </Properties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="radioCpuBoundActionPerformed"/>
+      </Events>
     </Component>
     <Component class="javax.swing.JRadioButton" name="radioIoBound">
       <Properties>
@@ -157,6 +160,9 @@
         </Property>
         <Property name="text" type="java.lang.String" value="I/O-Bound"/>
       </Properties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="radioIoBoundActionPerformed"/>
+      </Events>
     </Component>
     <Component class="javax.swing.JButton" name="botonCrear">
       <Properties>

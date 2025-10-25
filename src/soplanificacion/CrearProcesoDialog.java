@@ -22,7 +22,10 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
         super(parent, modal);
         initComponents();
         // Guarda la referencia a la Interfaz que lo llamó
-        this.interfazPrincipal = (Interfaz) parent; 
+        
+        
+        this.interfazPrincipal = (Interfaz) parent;
+        txtCiclosExcepcion.setEnabled(radioIoBound.isSelected());
 }
 
     /**
@@ -63,9 +66,19 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
 
         buttonGroup1.add(radioCpuBound);
         radioCpuBound.setText("CPU-Bound");
+        radioCpuBound.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                radioCpuBoundActionPerformed(evt);
+            }
+        });
 
         buttonGroup1.add(radioIoBound);
         radioIoBound.setText("I/O-Bound");
+        radioIoBound.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                radioIoBoundActionPerformed(evt);
+            }
+        });
 
         botonCrear.setText("Crear");
         botonCrear.addActionListener(new java.awt.event.ActionListener() {
@@ -270,6 +283,21 @@ public class CrearProcesoDialog extends javax.swing.JDialog {
         }
         
     }//GEN-LAST:event_botonCrearActionPerformed
+
+    private void radioCpuBoundActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_radioCpuBoundActionPerformed
+        // TODO add your handling code here:
+        if (radioCpuBound.isSelected()) {
+        txtCiclosExcepcion.setEnabled(false);
+        txtCiclosResolver.setText(""); // Opcional: limpia el campo
+    }
+    }//GEN-LAST:event_radioCpuBoundActionPerformed
+
+    private void radioIoBoundActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_radioIoBoundActionPerformed
+        // TODO add your handling code here:
+        if (radioIoBound.isSelected()) {
+        txtCiclosExcepcion.setEnabled(true);
+    }
+    }//GEN-LAST:event_radioIoBoundActionPerformed
 
     /**
      * @param args the command line arguments
