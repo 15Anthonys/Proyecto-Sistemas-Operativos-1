@@ -1,1 +1,1 @@
-﻿# Proyecto-Sistemas-Operativos-1
+Proyecto Realizado por Anthony Caldera y Luis Garnica
